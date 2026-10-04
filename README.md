@@ -14,7 +14,7 @@ the mod is playable, but the work goes on: more moves, more animations, and I'll
 
 - **RE_Kenshi 0.3.5 or newer** (it brings KenshiLib 0.5.0): [Nexus](https://www.nexusmods.com/kenshi/mods/847) or [GitHub](https://github.com/BFrizzleFoShizzle/RE_Kenshi).
 - **Kenshi 1.0.65** (Steam tested, GOG should work). On other game versions the dual stance stays off (one line in the log), left-hand fighting still works.
-- Don't use it together with DualWieldProbe: if both are installed, Nitoryu turns itself off.
+- Don't use it together with DualWieldProbe: both change the same combat code. Nitoryu doesn't turn itself off anymore, it only leaves a line in the log, so what happens in fights is on you.
 
 ## Install
 

@@ -40,7 +40,7 @@
 
 namespace
 {
-    const char* VERSION = "1.0.2";
+    const char* VERSION = "1.0.3";
 
     const DWORD COUNTS_STAGE_MS = 30000;
     const DWORD COUNTS_PROD_MS = 600000;
@@ -125,7 +125,6 @@ namespace
         t += (char)g_hotKey;
         return t;
     }
-    bool g_probeChecked = false;
     DWORD g_lastCounts = 0;
     HANDLE g_instance = NULL;
 
@@ -241,15 +240,6 @@ namespace
     void mainLoopWork(GameWorld* self)
     {
         diag::setMainThread(GetCurrentThreadId());
-        if (!g_probeChecked)
-        {
-            g_probeChecked = true;
-            if (probeLoaded())
-            {
-                allOff();
-                ErrorLog("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded; Nitoryu stays off. Disable one of them.");
-            }
-        }
         if (ou == NULL)
             return;
         bool held = g_hotKey != 0 && kit::held(g_hotKey) && kit::altHeld() == g_hotAlt
@@ -325,10 +315,7 @@ __declspec(dllexport) void startPlugin()
     ui::init();
     hud::init();
     if (probeLoaded())
-    {
-        ErrorLog("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded; Nitoryu stays off. Disable one of them.");
-        return;
-    }
+        DebugLog("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded too; both hook the same combat functions. If fights misbehave, remove one of them.");
 
     std::string on, off;
     checkSharedHooks();
