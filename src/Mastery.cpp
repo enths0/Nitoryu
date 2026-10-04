@@ -49,6 +49,13 @@ namespace
     std::map<Character*, Flow> g_flow;
     std::map<Character*, double> g_chain;
 
+    const double MUGEN_LINGER_MS = 700.0;
+    struct ChainShown
+    {
+        double armed, taken;
+    };
+    std::map<Character*, ChainShown> g_chainShown;
+
     struct Lock
     {
         Lock() { EnterCriticalSection(&g_lock); }
@@ -97,6 +104,7 @@ namespace mastery
         Lock l;
         g_flow.erase(c);
         g_chain.erase(c);
+        g_chainShown.erase(c);
     }
 }
 
@@ -188,6 +196,24 @@ namespace flow
     float dexBonus(Character* c) { return g_flowDex > 0.0f && active(c) ? g_flowDex : 0.0f; }
     float speedFactor(Character* c) { return g_flowSpeed > 0.0f && active(c) ? 1.0f + g_flowSpeed : 1.0f; }
     float capBonus(Character* c) { return g_flowCap > 0.0f && active(c) ? g_flowCap : 0.0f; }
+
+    void shown(std::vector<Shown>& out)
+    {
+        if (!g_enabled || !g_flowOn || g_flowMs <= 0.0)
+            return;
+        double now = defense::clockMs();
+        Lock l;
+        for (std::map<Character*, Flow>::iterator it = g_flow.begin(); it != g_flow.end(); ++it)
+        {
+            const Flow& f = it->second;
+            if (now < f.start || now >= f.end)
+                continue;
+            Shown s;
+            s.who = it->first->getHandle();
+            s.left = (float)((f.end - now) / g_flowMs);
+            out.push_back(s);
+        }
+    }
 }
 
 namespace mugen
@@ -221,6 +247,10 @@ namespace mugen
             if (g_chain.size() > 4096)
                 g_chain.clear();
             g_chain[attacker] = now;
+            if (g_chainShown.size() > 4096)
+                g_chainShown.clear();
+            ChainShown cs = { now, NEVER };
+            g_chainShown[attacker] = cs;
         }
         diag::count("mugen_chain_armed");
         feedback::say(attacker, lang::text("speech.mugen").c_str(), MUGEN_SAY_GAP_MS);
@@ -240,7 +270,39 @@ namespace mugen
             g_chain.erase(it);
         }
         bool fresh = now >= t && now - t <= g_chainWindowMs;
+        {
+            Lock l;
+            std::map<Character*, ChainShown>::iterator s = g_chainShown.find(c);
+            if (s != g_chainShown.end())
+            {
+                if (fresh)
+                    s->second.taken = now;
+                else
+                    g_chainShown.erase(s);
+            }
+        }
         diag::count(fresh ? "mugen_chain_taken" : "mugen_chain_expired");
         return fresh;
+    }
+
+    void shown(std::vector<hand>& out)
+    {
+        if (!g_enabled || !g_mugenOn)
+            return;
+        double now = defense::clockMs();
+        Lock l;
+        for (std::map<Character*, ChainShown>::iterator it = g_chainShown.begin(); it != g_chainShown.end();)
+        {
+            const ChainShown& s = it->second;
+            bool on = s.taken > NEVER ? now >= s.taken && now - s.taken <= MUGEN_LINGER_MS
+                                      : now >= s.armed && now - s.armed <= g_chainWindowMs;
+            if (!on)
+            {
+                g_chainShown.erase(it++);
+                continue;
+            }
+            out.push_back(it->first->getHandle());
+            ++it;
+        }
     }
 }

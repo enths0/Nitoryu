@@ -20,6 +20,7 @@ namespace blades
     Pair pairOf(Weapon* a, Weapon* b);
     const char* pairName(Pair p);
     bool mixedTypes(Weapon* a, Weapon* b);
+    bool mixedDefence(Weapon* main, Weapon* off);
     float guardMult(Weapon* a, Weapon* b);
     float twinMult(Weapon* a, Weapon* b);
 

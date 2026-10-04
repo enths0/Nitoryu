@@ -30,15 +30,17 @@
 #include "Dummy.h"
 #include "Ambidex.h"
 #include "Lefty.h"
+#include "Foreign.h"
 #include "Lang.h"
 #include "Ui.h"
+#include "Hud.h"
 #include "Balance.h"
 #include "Settings.h"
 #include "kit/diag.h"
 
 namespace
 {
-    const char* VERSION = "1.0.0";
+    const char* VERSION = "1.0.2";
 
     const DWORD COUNTS_STAGE_MS = 30000;
     const DWORD COUNTS_PROD_MS = 600000;
@@ -166,6 +168,7 @@ namespace
         lefty::setEnabled(false);
         visual::setEnabled(false);
         ui::setEnabled(false);
+        hud::setEnabled(false);
     }
 
     void feature(std::string& on, std::string& off, const char* name, bool ok)
@@ -258,6 +261,8 @@ namespace
         compatLine();
         defense::tick();
         visual::tick();
+        hud::tick();
+        ui::tick();
         DWORD now = GetTickCount();
         if (g_lastConstants == 0 || now - g_lastConstants > CONSTANTS_EVERY_MS)
         {
@@ -270,12 +275,14 @@ namespace
                 defense::applySettings();
                 pressure::applySettings();
                 mastery::applySettings();
+                hud::applySettings();
                 blades::applySettings();
                 dummy::applySettings();
                 combat::applySettings();
                 lefty::applySettings();
             }
             cfg::log();
+            foreign::applySettings();
             stance::refreshOptIn();
             combat::logTechniques();
             if (combat::enabled())
@@ -316,6 +323,7 @@ __declspec(dllexport) void startPlugin()
     ambidex::init();
     lefty::init();
     ui::init();
+    hud::init();
     if (probeLoaded())
     {
         ErrorLog("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded; Nitoryu stays off. Disable one of them.");
@@ -388,6 +396,7 @@ __declspec(dllexport) void startPlugin()
     if (!button)
         ui::setEnabled(false);
     feature(on, off, ui::iniOn() ? "ui" : "ui(ini)", button && ui::iniOn());
+    feature(on, off, "marks", hud::installHooks());
 
     std::string test;
     if (stance::forcedTier() > 0 || stance::testShareSet())
@@ -399,6 +408,8 @@ __declspec(dllexport) void startPlugin()
     }
     if (!ambidex::testText().empty())
         test += " TEST ambidexterity=" + ambidex::testText() + " (player characters).";
+    if (!ambidex::testNpcText().empty())
+        test += " TEST npc_ambidexterity=" + ambidex::testNpcText() + " (every NPC).";
     if (!balance::overridesText().empty())
         test += " [Balance] overrides: " + balance::overridesText() + ".";
     if (arms::clipText()[0] != '\0')

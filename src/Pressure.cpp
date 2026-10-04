@@ -251,4 +251,23 @@ namespace pressure
     }
 
     int maxStacks() { return g_maxStacks; }
+
+    void shown(std::vector<Shown>& out)
+    {
+        if (!g_enabled || !g_on)
+            return;
+        double now = defense::clockMs();
+        Lock l;
+        for (std::map<Character*, Mark>::iterator it = g_marks.begin(); it != g_marks.end(); ++it)
+        {
+            int n = current(it->second, now);
+            if (n <= 0 || it->second.by == NULL)
+                continue;
+            Shown s;
+            s.target = it->first->getHandle();
+            s.by = it->second.by->getHandle();
+            s.stacks = n;
+            out.push_back(s);
+        }
+    }
 }

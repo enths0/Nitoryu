@@ -33,6 +33,7 @@
 #include "Ambidex.h"
 #include "Stance.h"
 #include "Lefty.h"
+#include "Foreign.h"
 #include "Diagnostics.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
@@ -115,6 +116,7 @@ namespace
 
         double foughtAt;
         hand foe;
+        foreign::Watch fg;
     };
 
     CRITICAL_SECTION g_lock;
@@ -693,6 +695,8 @@ namespace
             why = "sheathe_hold_skipped_pair_not_on_body";
         else if (!upright(c))
             why = "sheathe_hold_skipped_down";
+        else if (foreign::playing(e.fg))
+            why = "sheathe_hold_skipped_foreign";
         if (why != NULL)
         {
             diag::count(why);
@@ -843,7 +847,10 @@ namespace
             {
                 e.checkHandsAt = now + CHECK_HANDS_MS;
 
-                arms::playClip(c, s.offFromHip ? arms::CLIP_DRAW_HIP : arms::CLIP_DRAW, defense::clockMs());
+                if (foreign::playing(e.fg))
+                    diag::count("foreign_draw_clip_skipped");
+                else
+                    arms::playClip(c, s.offFromHip ? arms::CLIP_DRAW_HIP : arms::CLIP_DRAW, defense::clockMs());
             }
             return;
         }
@@ -997,7 +1004,13 @@ namespace
         for (std::map<Character*, Entry>::iterator it = g_entries.begin(); it != g_entries.end(); ++it)
         {
             if (it->second.off == NULL)
+            {
+
+                Character* away = foreign::active() ? it->second.who.getCharacter() : NULL;
+                if (away != NULL && away == it->first)
+                    foreign::actionNow(away, away->getCombatClass(), it->second.fg, defense::clockMs());
                 continue;
+            }
             Character* c = it->second.who.getCharacter();
             if (c == NULL || c != it->first)
             {
@@ -1126,6 +1139,9 @@ namespace
             fin.mode = m;
             fin.inCombat = cc != NULL && cc->_isInCombatMode();
 
+            double fgNow = defense::clockMs();
+            fin.foreign = foreign::actionNow(c, cc, ent.fg, fgNow);
+
             if (fin.inCombat)
             {
                 hand foe = cc->_getAttackTarget();
@@ -1196,7 +1212,7 @@ namespace
             }
 
             CharMovement* mv = c->getMovement();
-            fin.running = mv != NULL && mv->isRunning();
+            fin.running = foreign::running(mv != NULL && mv->isRunning(), ent.fg, fgNow);
 
             fin.moving = c->getMovementSpeed() > 1.0f;
 
@@ -1367,6 +1383,8 @@ namespace visual
         arms::setOffBlockStyle(_stricmp(style, "low") == 0 ? 1 : _stricmp(style, "forward") == 0 ? 2 : 0);
 
         arms::setAngledSwap(GetPrivateProfileIntA("Animations", "angled_block_swap", 0, path.c_str()) != 0);
+
+        arms::setLimpSwing(GetPrivateProfileIntA("Animations", "limp_arm_swing", 1, path.c_str()) != 0);
 
         g_sheatheMain = GetPrivateProfileIntA("Animations", "dual_sheathe_main_blade", 1, path.c_str()) != 0;
 

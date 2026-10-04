@@ -188,6 +188,13 @@ namespace blades
         return g_enabled && g_pairOn && a != NULL && b != NULL && a->category != b->category;
     }
 
+    bool mixedDefence(Weapon* main, Weapon* off)
+    {
+        Sword* sw = off != NULL ? off->isSword() : NULL;
+        return sw != NULL && sw->modDefence > 0 && mixedTypes(main, off)
+            && g_mixedDefence > cfg::f(cfg::OFF_WEAPON_BONUS_SHARE);
+    }
+
     float guardMult(Weapon* a, Weapon* b) { return pairOf(a, b) == PAIR_LONG_SHORT ? g_guardMult : 1.0f; }
 
     float twinMult(Weapon* a, Weapon* b) { return pairOf(a, b) == PAIR_EQUAL ? g_twinMult : 1.0f; }

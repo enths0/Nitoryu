@@ -36,6 +36,7 @@
 #include "Defense.h"
 #include "Ambidex.h"
 #include "Lefty.h"
+#include "Foreign.h"
 #include "Moves.h"
 #include "Lang.h"
 #include "Pressure.h"
@@ -748,6 +749,22 @@ namespace
         LeaveCriticalSection(&g_pickLock);
     }
 
+    std::map<Character*, CombatTechniqueData*> g_riposte;
+
+    void noteRiposte(Character* me, CombatTechniqueData* t)
+    {
+        EnterCriticalSection(&g_pickLock);
+        if (t != NULL)
+        {
+            if (g_riposte.size() > 4096)
+                g_riposte.clear();
+            g_riposte[me] = t;
+        }
+        else
+            g_riposte.erase(me);
+        LeaveCriticalSection(&g_pickLock);
+    }
+
     struct Carry { Want want; double t; };
     std::map<Character*, Carry> g_carry;
     bool g_carryOn = true;
@@ -1187,6 +1204,7 @@ namespace
         if (isNitoryuTechnique(r))
         {
             noteOff(me, r);
+            noteRiposte(me, counter ? r : NULL);
             if (combat::isTwinTechnique(r))
                 noteDouble(me, p.now);
             if (counter)
@@ -1533,7 +1551,13 @@ namespace
     HitMaterialType hitBy_hook(Character* self, CutDirection dir, Damages& damage, Character* who,
                                CombatTechniqueData* attack, int comboID)
     {
+
+        bool watch = self != NULL && foreign::active() && self->isPlayerCharacter();
+        float cutIn = damage.cut, bluntIn = damage.blunt;
         HitMaterialType r = hitBy_inner(self, dir, damage, who, attack, comboID);
+        if (watch)
+            foreign::noteIncoming(self, nameOf(who), attack != NULL ? attack->animation : std::string("?"), comboID,
+                                  (int)r, hitLanded(r), cutIn, bluntIn, damage.cut, damage.blunt);
         if (hitLanded(r))
         {
             arms::clipHit(self);
@@ -1738,6 +1762,17 @@ namespace combat
 
     bool isTwinTechnique(CombatTechniqueData* t) { return moves::KINDS[moveKind(t)].twin; }
 
+    bool isRiposte(Character* c, CombatTechniqueData* t)
+    {
+        if (c == NULL || t == NULL)
+            return false;
+        EnterCriticalSection(&g_pickLock);
+        std::map<Character*, CombatTechniqueData*>::iterator it = g_riposte.find(c);
+        bool r = it != g_riposte.end() && it->second == t;
+        LeaveCriticalSection(&g_pickLock);
+        return r;
+    }
+
     int armsModeOf(CombatTechniqueData* t)
     {
         TechRec rec;
@@ -1893,6 +1928,7 @@ namespace combat
         g_lastDouble.erase(c);
         g_crossArmed.erase(c);
         g_lastOff.erase(c);
+        g_riposte.erase(c);
         g_foreignQuiet.erase(c);
         LeaveCriticalSection(&g_pickLock);
         EnterCriticalSection(&g_fightLock);

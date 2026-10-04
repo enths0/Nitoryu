@@ -212,4 +212,47 @@
       "A flanker is an enemy who attacked the fighter within this many milliseconds of game time.") \
     \
     X(DUMMY_ON, B, "1", "nitoryu pair dummy training", "Nitoryu 13 training", "Training", "pair_dummy", \
-      "A training building whose record is ticked nitoryu pair dummy trains Dual Wielding up to its output rate, for a character carrying an allowed pair.")
+      "A training building whose record is ticked nitoryu pair dummy trains Dual Wielding up to its output rate, for a character carrying an allowed pair.") \
+    X(AMB_XP_PARRY, F, "2.0", "nitoryu dual wielding xp parry", "Nitoryu 13 training", "Training", "xp_parry", \
+      "Dual Wielding XP by deed: a parry with the second blade trains Dual Wielding this many times more than a plain block (the game gives a block a tenth of a hit's weapon XP). 1 = as a block.") \
+    X(AMB_XP_TWIN, F, "1.5", "nitoryu dual wielding xp twin", "Nitoryu 13 training", "Training", "xp_twin", \
+      "Dual Wielding XP by deed: a hit that lands from a move of both blades (a twin strike, a finisher, an opener) trains Dual Wielding this many times more. 1 = as any hit.") \
+    X(AMB_XP_RIPOSTE, F, "1.5", "nitoryu dual wielding xp riposte", "Nitoryu 13 training", "Training", "xp_riposte", \
+      "Dual Wielding XP by deed: the impacts of a riposte (the attack that answers a block) train Dual Wielding this many times more. With a twin riposte the higher of the two factors counts. 1 = as any attack.") \
+    X(AMB_XP_OUTNUMBERED, F, "1.5", "nitoryu dual wielding xp outnumbered", "Nitoryu 13 training", "Training", "xp_outnumbered", \
+      "Dual Wielding XP by deed: while two or more enemies attack the fighter, everything trains Dual Wielding this many times more (on top of the factors above). 1 = off.") \
+    X(AMB_XP_OUTNUMBERED_MS, I, "5000", "nitoryu dual wielding xp outnumbered ms", "Nitoryu 13 training", "Training", "xp_outnumbered_ms", \
+      "The fighter is outnumbered while a second enemy's attack reached it (blocked or landed) within this many milliseconds of game time.") \
+    X(AMB_XP_HIT_TAKEN, F, "0.25", "nitoryu dual wielding xp hit taken", "Nitoryu 13 training", "Training", "xp_hit_taken", \
+      "A hit taken in the dual stance trains Dual Wielding: this share of the Melee Defence XP the game gives for that hit, which is higher the stronger the attacker is. 0 = off.") \
+    \
+    X(FOREIGN_MODE, S, "auto", "nitoryu foreign control", "Nitoryu 14 other plugins", "Compat", "foreign_control", \
+      "Another plugin that plays swings, blocks and weapon switches itself, outside the game's own combat (a direct-control mod): off = Nitoryu ignores it; auto = Nitoryu's animations give way only when one of the plugins below is loaded; on = always.") \
+    X(FOREIGN_PLUGINS, S, "ShoulderCombat.dll", "nitoryu foreign control plugins", "Nitoryu 14 other plugins", "Compat", "plugins", \
+      "DLL file names, comma separated. With foreign control on auto, one of them loaded turns the giving way on.") \
+    X(FOREIGN_HOLD_MS, I, "6000", "nitoryu foreign control hold ms", "Nitoryu 14 other plugins", "Compat", "hold_ms", \
+      "After the other plugin's last swing or block, for this many milliseconds of game time the run animation waits for a steady run (run ms). A draw or a sheathe under its swing gets no animation, the blades follow at once.") \
+    X(FOREIGN_RUN_MS, I, "300", "nitoryu foreign control run ms", "Nitoryu 14 other plugins", "Compat", "run_ms", \
+      "In that time the run animation starts only after this many milliseconds of running without a stop.") \
+    \
+    X(HUD_MARKS, I, "1", "nitoryu marks", "Nitoryu 15 marks", "Marks", "marks", \
+      "Marks that show the rank skills at work, without text. 0 = none, 1 = the characters the player has selected (and the enemies they press), 2 = all of the player's characters, 3 = every fighter.") \
+    X(HUD_PLACE, I, "2", "nitoryu marks place", "Nitoryu 15 marks", "Marks", "place", \
+      "Where the marks show: 2 = above the heads, 1 = on the squad portraits (all of the player's characters, whatever nitoryu marks says), 3 = both.") \
+    X(HUD_FLOW, B, "1", "nitoryu marks flow", "Nitoryu 15 marks", "Marks", "flow", \
+      "The flow mark: a wave for a fighter in flow, with a bar under it that runs out with the flow.") \
+    X(HUD_MUGEN, B, "1", "nitoryu marks mugen", "Nitoryu 15 marks", "Marks", "mugen", \
+      "The Mugen mark: a loop for a fighter whose chained twin strike is waiting.") \
+    X(HUD_PRESSURE, B, "1", "nitoryu marks pressure", "Nitoryu 15 marks", "Marks", "pressure", \
+      "The pressure mark: one pip per stack, on the portrait of the fighter who presses (the most stacks on one enemy) or above the pressured fighter; the pips change colour at full pressure.") \
+    X(HUD_SIZE, I, "22", "nitoryu marks size", "Nitoryu 15 marks", "Marks", "size", \
+      "Above the heads: side of a mark in pixels (8-64). A pressure pip is half of it. On a portrait the marks follow the portrait's size.") \
+    X(HUD_HEIGHT, F, "24", "nitoryu marks height", "Nitoryu 15 marks", "Marks", "height", \
+      "Above the heads: how far above a character's feet the marks sit, in game units, when the character's name is not shown (or on name is 0).") \
+    X(HUD_ON_NAME, B, "1", "nitoryu marks on name", "Nitoryu 15 marks", "Marks", "on_name", \
+      "Above the heads: the marks sit right on top of the game's name label over the character when it is shown; 0 = always at height.") \
+    X(HUD_TIPS, B, "0", "nitoryu marks tips", "Nitoryu 15 marks", "Marks", "tips", \
+      "The mouse over a mark shows the skill's name and what it does.") \
+    \
+    X(STATS_GROUP, I, "1", "nitoryu stats line group", "Nitoryu 16 stats window", "Stats", "group", \
+      "Where the Dual Wielding line sits in the character's stats window: 1 = at the end of the Weapons group; 2 = in the Combat group, after its last skill (the Ranged group moves down a row).")

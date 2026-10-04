@@ -10,6 +10,7 @@
 #include <kenshi/Damages.h>
 #include <kenshi/Gear.h>
 #include <kenshi/GameData.h>
+#include <kenshi/Faction.h>
 #include <kenshi/gui/CharacterStatsWindow.h>
 #include <kenshi/gui/DatapanelGUI.h>
 #include <kenshi/gui/DataPanelLine.h>
@@ -25,6 +26,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <climits>
 #include <map>
 #include <string>
 
@@ -43,11 +45,13 @@
 #include "Balance.h"
 #include "Diagnostics.h"
 #include "kit/diag.h"
+#include "kit/fcs.h"
 
 namespace
 {
     const char* const SAVE_KEY = "NIT_ambidexterity";
     const char* const DUAL_OFF_KEY = "NIT_dual_off";
+    const char* const ANY_WEAPON_KEY = "NIT_any_weapon";
     const char* const RANK_KEY = "NIT_rank";
     const char* const UI_KEY = "nitoryu_ambidexterity";
     const int DETAIL_BUDGET = 60;
@@ -56,6 +60,11 @@ namespace
     bool g_showLine = true;
     float g_testA = -1.0f;
     bool g_testSkill = false;
+
+    const std::string FIELD_KEY = "nitoryu dual wielding";
+    std::map<std::string, float> g_iniSkill;
+    float g_testNpcA = -1.0f;
+    bool g_testNpcSkill = false;
     std::string g_label = "Dual Wielding";
 
     struct Texts
@@ -68,6 +77,8 @@ namespace
         std::string rank[6];
         std::string ranksTitle, rankOpens[6], rankNeeds, rankNeedsDp;
         std::string rankUp;
+        std::string marksTitle, markFlow, markMugen, markPressure;
+        std::string pathTitle, pathFormula, pathNote;
     };
     Texts g_text;
 
@@ -92,6 +103,13 @@ namespace
         return std::string(n);
     }
 
+    std::string number(float v)
+    {
+        char n[32];
+        sprintf_s(n, "%g", (double)((float)((int)(v * 10.0f + (v < 0.0f ? -0.5f : 0.5f))) / 10.0f));
+        return std::string(n);
+    }
+
     void replaceAll(std::string& s, const char* what, const std::string& with)
     {
         size_t n = strlen(what);
@@ -102,6 +120,10 @@ namespace
     const char* const RANK_COLOUR_KEY[6] = { "Greyed", "ItemGrade1", "ItemGrade2", "ItemGrade3", "ItemGrade4", "ItemGrade5" };
     const char* const RANK_COLOUR_DEFAULT[6] = { "#444444", "#d9ccbf", "#4099b3", "#66fc80", "#fceb0d", "#e60000" };
     std::string g_rankColour[6];
+
+    const char* const HEAD_COLOUR_KEY[2] = { "Main", "Good" };
+    const char* const HEAD_COLOUR_DEFAULT[2] = { "#afa68b", "#a8b774" };
+    std::string g_headColour[2];
     bool g_coloursRead = false;
     bool g_coloursOn = true;
     bool g_rankUpMessage = true;
@@ -133,6 +155,8 @@ namespace
         g_coloursRead = true;
         for (int i = 0; i < 6; ++i)
             g_rankColour[i] = RANK_COLOUR_DEFAULT[i];
+        for (int i = 0; i < 2; ++i)
+            g_headColour[i] = HEAD_COLOUR_DEFAULT[i];
         std::string xml, source = "not found";
         try
         {
@@ -164,10 +188,49 @@ namespace
             g_rankColour[i] = c;
             ++found;
         }
+        for (int i = 0; i < 2; ++i)
+        {
+            std::string c = colourIn(xml, HEAD_COLOUR_KEY[i]);
+            if (!c.empty())
+                g_headColour[i] = c;
+        }
         kit::Diag("rank_colours").kv("source", source).kv("keys_found", found).kv("locked", g_rankColour[0])
             .kv("r1", g_rankColour[1]).kv("r2", g_rankColour[2]).kv("r3", g_rankColour[3]).kv("r4", g_rankColour[4])
-            .kv("r5", g_rankColour[5]).emit();
+            .kv("r5", g_rankColour[5]).kv("heading", g_headColour[0]).kv("heading2", g_headColour[1]).emit();
     }
+
+    const char* headColour(int level)
+    {
+        readColours();
+        return g_headColour[level == 2 ? 1 : 0].c_str();
+    }
+
+    const char* headColour(int level);
+
+    void setBlock(DatapanelGUI* panel, int cat, const std::string& text, const char* firstColour)
+    {
+        const char* const wrap = "Kenshi_WordWrapEmpty";
+        size_t from = 0;
+        for (bool first = true; from <= text.size(); first = false)
+        {
+            size_t bar = text.find('|', from);
+            std::string part = text.substr(from, bar == std::string::npos ? std::string::npos : bar - from);
+            if (!part.empty())
+                panel->setLine((first && firstColour != NULL ? std::string(firstColour) : std::string()) + part, "",
+                               wrap, wrap, cat);
+            if (bar == std::string::npos)
+                break;
+            from = bar + 1;
+        }
+    }
+
+    void setGap(DatapanelGUI* panel, int cat, int& gaps)
+    {
+        const char* const wrap = "Kenshi_WordWrapEmpty";
+        panel->setLine(std::string(++gaps, ' '), "", wrap, wrap, cat);
+    }
+
+    std::string heading(const std::string& title) { return std::string(headColour(1)) + title; }
 
     std::string rankColour(int tier)
     {
@@ -181,6 +244,14 @@ namespace
     std::map<Character*, float> g_amb;
 
     std::map<Character*, int> g_rankMax;
+
+    struct Foes
+    {
+        Character* who[2];
+        double t[2];
+    };
+    std::map<Character*, Foes> g_foes;
+    std::map<std::string, float> g_listSkill;
     int g_detailLeft = DETAIL_BUDGET;
 
     struct Lock
@@ -226,6 +297,40 @@ namespace
     }
 
     float seedFor(Character* c) { return cfg::f(cfg::AMB_SEED) * bestSkill(c); }
+
+    float authored(Character* c, const char*& from)
+    {
+        static const char* const FROM[2][3] = { { "ini_character", "character", "list_character" },
+                                                { "ini_faction", "faction", "list_faction" } };
+        Faction* f = c->getFaction();
+        GameData* recs[2] = { c->getGameData(), f != NULL ? f->data : NULL };
+        for (int i = 0; i < 2; ++i)
+        {
+            if (recs[i] == NULL)
+                continue;
+            std::map<std::string, float>::const_iterator it = g_iniSkill.find(recs[i]->stringID);
+            if (it != g_iniSkill.end())
+            {
+                from = FROM[i][0];
+                return it->second;
+            }
+            float v = kit::fcsFloat(recs[i], FIELD_KEY, -1.0f);
+            if (finite(v) && v >= 0.0f)
+            {
+                from = FROM[i][1];
+                return v;
+            }
+
+            Lock l;
+            it = g_listSkill.find(recs[i]->stringID);
+            if (it != g_listSkill.end())
+            {
+                from = FROM[i][2];
+                return it->second;
+            }
+        }
+        return -1.0f;
+    }
 
     bool takeDetail()
     {
@@ -282,6 +387,15 @@ namespace
             data->fdata.insert(std::make_pair(dk, 1.0f));
         if (off)
             diag::count("toggle_saved_off");
+
+        bool any = self->me->isPlayerCharacter() && stance::anyWeapon(self->me);
+        std::string ak(ANY_WEAPON_KEY);
+        if (data->fdata.find(ak) != data->fdata.end())
+            data->fdata.find(ak)->second = any ? 1.0f : 0.0f;
+        else if (any)
+            data->fdata.insert(std::make_pair(ak, 1.0f));
+        if (any)
+            diag::count("any_weapon_saved");
     }
 
     void (*updateStats_orig)(CharStats*, GameData*) = NULL;
@@ -298,6 +412,9 @@ namespace
         int dualOff = -1;
         if (g_enabled && data != NULL && data->fdata.count(DUAL_OFF_KEY) != 0)
             dualOff = data->fdata.find(DUAL_OFF_KEY)->second > 0.5f ? 1 : 0;
+        int anyWeapon = -1;
+        if (g_enabled && data != NULL && data->fdata.count(ANY_WEAPON_KEY) != 0)
+            anyWeapon = data->fdata.find(ANY_WEAPON_KEY)->second > 0.5f ? 1 : 0;
         int rankMax = -1;
         if (g_enabled && data != NULL && data->fdata.count(RANK_KEY) != 0)
         {
@@ -316,6 +433,12 @@ namespace
             if (dualOff == 1)
                 diag::count("toggle_loaded_off");
         }
+        if (anyWeapon >= 0 && self != NULL && self->me != NULL)
+        {
+            stance::setAnyWeapon(self->me, anyWeapon == 1);
+            if (anyWeapon == 1)
+                diag::count("any_weapon_loaded");
+        }
 
         if (has && a >= 0.0f && self != NULL && self->me != NULL)
         {
@@ -331,6 +454,7 @@ namespace
             Lock l;
             g_amb.erase(self);
             g_rankMax.erase(self);
+            g_foes.erase(self);
         }
 
         stance::forget(self);
@@ -348,12 +472,20 @@ namespace
     __declspec(thread) float t_capAmount = 0.0f;
     __declspec(thread) float t_capLimit = 101.0f;
 
+    __declspec(thread) float* t_capDefence = NULL;
+    __declspec(thread) float t_capDefenceAmount = 0.0f;
+
     void (*increase_orig)(float&, float, float) = NULL;
     void increase_hook(float& stat, float amount, float limit)
     {
         if (t_capStat != NULL && &stat == t_capStat)
         {
             t_capAmount += amount;
+            t_capLimit = limit;
+        }
+        else if (t_capDefence != NULL && &stat == t_capDefence)
+        {
+            t_capDefenceAmount += amount;
             t_capLimit = limit;
         }
         increase_orig(stat, amount, limit);
@@ -364,19 +496,60 @@ namespace
         CharStats* st;
         float* saved;
         float* prevCap;
-        SkillRedirect(CharStats* s, float* to) : st(s), saved(s->pCurrentWeaponSkill), prevCap(t_capStat)
+        float* prevDefence;
+        SkillRedirect(CharStats* s, float* to, float* defence)
+            : st(s), saved(s->pCurrentWeaponSkill), prevCap(t_capStat), prevDefence(t_capDefence)
         {
             if (to != NULL)
                 s->pCurrentWeaponSkill = to;
             t_capStat = s->pCurrentWeaponSkill;
             t_capAmount = 0.0f;
+            t_capDefence = defence;
+            t_capDefenceAmount = 0.0f;
         }
         ~SkillRedirect()
         {
             st->pCurrentWeaponSkill = saved;
             t_capStat = prevCap;
+            t_capDefence = prevDefence;
         }
     };
+
+    bool outnumbered(Character* me, Character* attacker, double now)
+    {
+        double window = cfg::d(cfg::AMB_XP_OUTNUMBERED_MS);
+        Lock l;
+        std::map<Character*, Foes>::iterator it = g_foes.find(me);
+        if (it == g_foes.end())
+        {
+            if (attacker == NULL)
+                return false;
+            if (g_foes.size() > 4096)
+                g_foes.clear();
+            Foes z = { { NULL, NULL }, { 0.0, 0.0 } };
+            it = g_foes.insert(std::make_pair(me, z)).first;
+        }
+        Foes& f = it->second;
+        if (attacker != NULL)
+        {
+            int slot = f.who[0] == attacker ? 0 : f.who[1] == attacker ? 1 : f.who[0] == NULL ? 0
+                : f.who[1] == NULL ? 1 : (f.t[0] <= f.t[1] ? 0 : 1);
+            f.who[slot] = attacker;
+            f.t[slot] = now;
+        }
+        for (int i = 0; i < 2; ++i)
+            if (f.who[i] == NULL || now < f.t[i] || now - f.t[i] > window)
+                return false;
+        return true;
+    }
+
+    float weaponXp(Weapon* w)
+    {
+        float k = w != NULL ? kit::fcsFloat(w->data, "nitoryu dual wielding xp", 1.0f) : 1.0f;
+        return finite(k) && k >= 0.0f ? k : 1.0f;
+    }
+
+    float atLeast0(float v) { return finite(v) && v > 0.0f ? v : 0.0f; }
 
     void (*xpMelee_orig)(CharStats*, CharStats::DeadTimeState, Character*, const Damages&) = NULL;
     void xpMelee_hook(CharStats* self, CharStats::DeadTimeState what, Character* target, const Damages& damage)
@@ -419,34 +592,84 @@ namespace
             diag::count(offAttack ? "xp_off_attack" : "xp_off_parry");
         else if (offAttack || offParry)
             diag::count("xp_off_same_skill");
+        bool hitTaken = what == CharStats::WAS_HIT;
         {
-            SkillRedirect redirect(self, offSkill);
+            SkillRedirect redirect(self, offSkill, hitTaken ? &self->getStatRef(STAT_MELEE_DEFENCE) : NULL);
             xpMelee_orig(self, what, target, damage);
         }
-        float amount = t_capAmount;
-        if (!(amount > 0.0f) || !finite(amount))
+
+        float base = cfg::f(cfg::AMB_XP_SHARE) * t_capAmount;
+        float deed = 1.0f;
+        const char* deedName = "";
+        if (hitTaken)
+        {
+
+            if (!(t_capDefenceAmount > 0.0f))
+                diag::count("ambi_hit_taken_no_defence_xp");
+            base = atLeast0(cfg::f(cfg::AMB_XP_HIT_TAKEN)) * t_capDefenceAmount;
+            deedName = "ambi_xp_hit_taken";
+        }
+        else if (offParry)
+        {
+            deed = atLeast0(cfg::f(cfg::AMB_XP_PARRY));
+            deedName = "ambi_xp_parry";
+        }
+        else if ((what == CharStats::ATTACK_HIT || what == CharStats::ATTACK_WAS_BLOCKED) && t_impactAttacker == me)
+        {
+            CombatClass* cc = me->getCombatClass();
+            if (cc != NULL && cc->currentTechnique == t_impactTech)
+            {
+                float twin = what == CharStats::ATTACK_HIT && combat::isTwinTechnique(t_impactTech)
+                    ? atLeast0(cfg::f(cfg::AMB_XP_TWIN)) : 1.0f;
+                float riposte = combat::isRiposte(me, t_impactTech) ? atLeast0(cfg::f(cfg::AMB_XP_RIPOSTE)) : 1.0f;
+                if (riposte != 1.0f && riposte >= twin)
+                {
+                    deed = riposte;
+                    deedName = "ambi_xp_riposte";
+                }
+                else if (twin != 1.0f)
+                {
+                    deed = twin;
+                    deedName = "ambi_xp_twin";
+                }
+            }
+        }
+        if (!(base > 0.0f) || !finite(base))
             return;
+        bool victim = hitTaken || what == CharStats::BLOCKED_IT;
+        bool many = outnumbered(me, victim ? target : NULL, defense::clockMs());
+        if (many)
+            deed *= atLeast0(cfg::f(cfg::AMB_XP_OUTNUMBERED));
+        if (deedName[0] != 0)
+            diag::count(deedName);
+        if (many)
+            diag::count("ambi_xp_outnumbered");
 
         float sMin = s.skillMain < s.skillOff ? s.skillMain : s.skillOff;
+        float byWeapon = weaponXp(s.main) * weaponXp(s.off);
         if (leftHanded)
         {
             Weapon* w = me->getCurrentWeapon();
             StatsEnumerated st = w != NULL ? stance::statFor(w->category) : STAT_NONE;
             sMin = st != STAT_NONE ? self->getStat(st, false) : 0.0f;
+            byWeapon = weaponXp(w);
             diag::count("ambi_grow_lefty");
         }
+        if (byWeapon != 1.0f)
+            diag::count("ambi_xp_weapon_factor");
 
         float a = ambidex::stored(me);
         float k = 1.0f + (sMin - a) / 50.0f;
         k = k < 0.25f ? 0.25f : (k > 2.0f ? 2.0f : k);
         float next = a;
-        increase_orig(next, cfg::f(cfg::AMB_XP_SHARE) * amount * k, t_capLimit);
+        increase_orig(next, base * k * deed * byWeapon, t_capLimit);
         if (!finite(next) || next < a)
             return;
         store(me, next);
         diag::count("ambi_grow");
         if (me->isPlayerCharacter() && takeDetail())
-            kit::Diag("ambi").kv("who", me->displayName).kv("state", (int)what).kv("xp_amount", amount)
+            kit::Diag("ambi").kv("who", me->displayName).kv("state", (int)what).kv("xp_amount", base)
+                .kv("deed", deedName).kv("deed_mult", deed).kv("outnumbered", many).kv("weapon_mult", byWeapon)
                 .kv("a_before", a).kv("a_after", next).kv("skill_min", sMin).kv("limit", t_capLimit)
                 .kv("off_xp", offSkill != NULL).emit();
     }
@@ -483,9 +706,9 @@ namespace
         right->clear();
         int lc = left->getCurrentCategory();
         left->setLine(g_label, "", lc, false, true);
-        left->setLine(g_text.affectsTitle, "", lc, false, true);
+        left->setLine(heading(g_text.affectsTitle), "", lc, false, true);
         left->setLine(g_text.affects, "", lc, false, true);
-        left->setLine(g_text.trainTitle, "", lc, false, true);
+        left->setLine(heading(g_text.trainTitle), "", lc, false, true);
         left->setLine(g_text.train, "", lc, false, true);
 
         ambidex::Effective e = ambidex::effective(win->character);
@@ -540,11 +763,14 @@ namespace
 
             if (!what.empty())
                 left->setLine(g_text.pair, what, lc, false, true);
-            if (blades::mixedTypes(pa, pb))
+
+            bool paSecond = win->character->getCurrentWeapon() == pb;
+            if (blades::mixedDefence(paSecond ? pb : pa, paSecond ? pa : pb))
                 left->setLine(what.empty() ? g_text.pair : std::string(" "), g_text.pairMixed, lc, false, true);
         }
 
-        left->setLine(g_text.ranksTitle, "", lc, false, true);
+        left->setLine(" ", "", lc, false, true);
+        left->setLine(heading(g_text.ranksTitle), "", lc, false, true);
         for (int n = 1; n <= tuning::TIERS; ++n)
         {
             std::string line = rankColour(p.tier >= n ? n : 0) + rankName(n);
@@ -563,14 +789,147 @@ namespace
         }
         setProgress(right, a);
         int rc = right->getCurrentCategory();
-        right->setLine(g_text.descTitle, "", rc, false, true);
-        right->setLine(g_text.desc, "", "Kenshi_WordWrapEmpty", "Kenshi_WordWrapEmpty", rc);
+        const char* const wrap = "Kenshi_WordWrapEmpty";
+        int gaps = 0;
+        setGap(right, rc, gaps);
+        right->setLine(heading(g_text.descTitle), "", rc, false, true);
+        right->setLine(g_text.desc, "", wrap, wrap, rc);
+
+        {
+            std::string f = g_text.pathFormula;
+            replaceAll(f, "{skill}", number(cfg::f(cfg::W_SKILL) * 100.0f));
+            replaceAll(f, "{dex}", number(cfg::f(cfg::W_DEX) * 100.0f));
+            replaceAll(f, "{atk}", number(cfg::f(cfg::W_ATTACK) * 100.0f));
+            replaceAll(f, "{def}", number(cfg::f(cfg::W_DEFENCE) * 100.0f));
+            replaceAll(f, "{dw}", number(cfg::f(cfg::W_AMBI) * 100.0f));
+            setGap(right, rc, gaps);
+            right->setLine(heading(g_text.pathTitle), "", rc, false, true);
+            setBlock(right, rc, f, NULL);
+            right->setLine(g_text.pathNote, "", wrap, wrap, rc);
+        }
+
+        const bool mPressure = cfg::b(cfg::HUD_PRESSURE) && cfg::b(cfg::PRESSURE_ON);
+        const bool mFlow = cfg::b(cfg::HUD_FLOW) && cfg::b(cfg::FLOW_ON);
+        const bool mMugen = cfg::b(cfg::HUD_MUGEN) && cfg::b(cfg::MUGEN_ON);
+        if (cfg::i(cfg::HUD_MARKS) != 0 && (mPressure || mFlow || mMugen))
+        {
+            setGap(right, rc, gaps);
+            right->setLine(heading(g_text.marksTitle), "", rc, false, true);
+            if (mPressure)
+            {
+                std::string t = g_text.markPressure;
+                replaceAll(t, "{max}", number(cfg::f(cfg::PRESSURE_MAX_STACKS)));
+                setBlock(right, rc, t, headColour(2));
+            }
+            if (mFlow)
+            {
+                std::string t = g_text.markFlow;
+                replaceAll(t, "{attacks}", number(cfg::f(cfg::FLOW_ATTACKS)));
+                replaceAll(t, "{window}", number(cfg::f(cfg::FLOW_WINDOW_MS) / 1000.0f));
+                replaceAll(t, "{duration}", number(cfg::f(cfg::FLOW_DURATION_MS) / 1000.0f));
+                setBlock(right, rc, t, headColour(2));
+            }
+            if (mMugen)
+                setBlock(right, rc, g_text.markMugen, headColour(2));
+        }
         diag::count("ambi_description");
+    }
+
+    const char* const HEADER_SKIN = "Kenshi_WordWrapEmpty_StandardText_Large";
+
+    bool topOf(DataPanelLine* l, int& top)
+    {
+        MyGUI::Widget* w = l->w1 != NULL ? (MyGUI::Widget*)l->w1 : (MyGUI::Widget*)l->w2;
+        if (w == NULL)
+            return false;
+        top = w->getTop();
+        return true;
+    }
+
+    bool isHeader(DataPanelLine* l)
+    {
+        return l->skinW1 == HEADER_SKIN || l->w2 == NULL || l->w2->getCaption().empty();
+    }
+
+    void moveLine(DataPanelLine* l, int dy)
+    {
+        MyGUI::Widget* own[2] = { l->w1, l->w2 };
+        for (int i = 0; i < 2; ++i)
+            if (own[i] != NULL)
+                own[i]->setPosition(own[i]->getLeft(), own[i]->getTop() + dy);
+        for (size_t i = 0; i < l->widgets.size(); ++i)
+        {
+            MyGUI::Widget* w = l->widgets[i];
+            if (w != NULL && w != own[0] && w != own[1])
+                w->setPosition(w->getLeft(), w->getTop() + dy);
+        }
+    }
+
+    const char* placeAfterFirstGroup(DatapanelGUI* panel, int cat, DataPanelLine* ours)
+    {
+        int oursTop = 0;
+        if (ours == NULL || !topOf(ours, oursTop))
+            return "no_rows";
+        const int n = panel->getNumLines(cat);
+        int firstHeader = INT_MAX;
+        for (int i = 0; i < n; ++i)
+        {
+            DataPanelLine* l = panel->getLineByNum(cat, i);
+            int t = 0;
+            if (l != NULL && l != ours && topOf(l, t) && isHeader(l) && t < firstHeader)
+                firstHeader = t;
+        }
+        int nextHeader = INT_MAX;
+        int bottom = INT_MIN;
+        DataPanelLine* bottomLine = NULL;
+        for (int i = 0; i < n; ++i)
+        {
+            DataPanelLine* l = panel->getLineByNum(cat, i);
+            int t = 0;
+            if (l == NULL || l == ours || !topOf(l, t))
+                continue;
+            if (isHeader(l) && t > firstHeader && t < nextHeader)
+                nextHeader = t;
+            if (t > bottom)
+            {
+                bottom = t;
+                bottomLine = l;
+            }
+        }
+        if (nextHeader == INT_MAX || bottomLine == NULL)
+            return "one_group";
+        if (oursTop < nextHeader)
+            return "placed";
+        const int pitch = oursTop - bottom;
+        if (pitch <= 0)
+            return "no_rows";
+        int above = INT_MIN;
+        for (int i = 0; i < n; ++i)
+        {
+            DataPanelLine* l = panel->getLineByNum(cat, i);
+            int t = 0;
+            if (l == NULL || l == ours || !topOf(l, t))
+                continue;
+            if (t < nextHeader && t > above)
+                above = t;
+            if (t >= nextHeader)
+                moveLine(l, pitch);
+        }
+        moveLine(ours, (above != INT_MIN ? above + pitch : nextHeader) - oursTop);
+
+        if (panel->bottomLine.find(cat) != panel->bottomLine.end())
+            panel->bottomLine[cat] = bottomLine;
+        return "moved";
     }
 
     void setStatsLine(CharacterStatsWindow* win)
     {
-        if (!g_showLine || win == NULL || win->character == NULL || win->skills1Datapanel == NULL)
+        if (!g_showLine || win == NULL || win->character == NULL)
+            return;
+
+        const bool inCombat = cfg::i(cfg::STATS_GROUP) != 1 && win->skills2Datapanel != NULL;
+        DatapanelGUI* panel = inCombat ? win->skills2Datapanel : win->skills1Datapanel;
+        if (panel == NULL)
             return;
 
         float a = ambidex::get(win->character);
@@ -584,7 +943,6 @@ namespace
             sprintf_s(num, "%d", (int)(a + 0.0001f));
         std::string value(num);
 
-        DatapanelGUI* panel = win->skills1Datapanel;
         int cat = panel->getCurrentCategory();
         DataPanelLine* line = NULL;
         if (panel->lineExists(UI_KEY, cat))
@@ -597,6 +955,14 @@ namespace
         {
             line = panel->setLine(UI_KEY, g_label, value, cat, false, true);
             diag::count("ambi_line_added");
+            if (inCombat)
+            {
+                const char* did = placeAfterFirstGroup(panel, cat, line);
+                static int logged = 0;
+                if (logged < 3 && ++logged)
+                    kit::Diag("stats_line").kv("group", "combat").kv("rows", panel->getNumLines(cat))
+                        .kv("placed", did).emit();
+            }
         }
         bool ours = win->currentStatIdDescription == UI_KEY;
 
@@ -642,6 +1008,19 @@ namespace ambidex
         else if (ta[0] != 0)
             g_testA = (float)atof(ta);
 
+        char tn[32] = { 0 };
+        GetPrivateProfileStringA("Test", "npc_ambidexterity", "", tn, sizeof(tn), path.c_str());
+        if (_stricmp(tn, "skill") == 0)
+            g_testNpcSkill = true;
+        else if (tn[0] != 0)
+            g_testNpcA = (float)atof(tn);
+
+        int bad = cfg::readIdValues(path, "NPC", "skill", g_iniSkill);
+        if (!g_iniSkill.empty() || bad > 0 || g_testNpcSkill || g_testNpcA >= 0.0f)
+            kit::Diag("npc_skill").kv("from_ini", (int)g_iniSkill.size()).kv("bad_entries", bad)
+                .kv("test_npc", g_testNpcSkill ? std::string("skill") : g_testNpcA >= 0.0f ? std::string("set") : std::string())
+                .emit();
+
         struct { const char* ini; const char* key; std::string* out; } t[] = {
             { "label", "stats.label", &g_label },
             { "affects_title", "stats.affects_title", &g_text.affectsTitle },
@@ -677,6 +1056,13 @@ namespace ambidex
             { "rank_needs", "stats.rank_needs", &g_text.rankNeeds },
             { "rank_needs_dp", "stats.rank_needs_dp", &g_text.rankNeedsDp },
             { "rank_up", "stats.rank_up", &g_text.rankUp },
+            { "marks_title", "stats.marks_title", &g_text.marksTitle },
+            { "mark_flow", "stats.mark_flow", &g_text.markFlow },
+            { "mark_mugen", "stats.mark_mugen", &g_text.markMugen },
+            { "mark_pressure", "stats.mark_pressure", &g_text.markPressure },
+            { "path_title", "stats.path_title", &g_text.pathTitle },
+            { "path_formula", "stats.path_formula", &g_text.pathFormula },
+            { "path_note", "stats.path_note", &g_text.pathNote },
         };
         g_coloursOn = GetPrivateProfileIntA("Stats", "rank_colours", 1, path.c_str()) != 0;
         g_rankUpMessage = GetPrivateProfileIntA("Stats", "rank_up_message", 1, path.c_str()) != 0;
@@ -757,6 +1143,23 @@ namespace ambidex
         return buf;
     }
 
+    void setListSkills(const std::map<std::string, float>& byRecord)
+    {
+        Lock l;
+        g_listSkill = byRecord;
+    }
+
+    std::string testNpcText()
+    {
+        if (g_testNpcSkill)
+            return "skill";
+        if (g_testNpcA < 0.0f)
+            return "";
+        char buf[32];
+        sprintf_s(buf, "%.0f", g_testNpcA);
+        return buf;
+    }
+
     float get(Character* c)
     {
         if (c == NULL)
@@ -766,6 +1169,12 @@ namespace ambidex
             return bestSkill(c);
         if (g_testA >= 0.0f && c->isPlayerCharacter())
             return g_testA;
+
+        if ((g_testNpcSkill || g_testNpcA >= 0.0f) && !c->isPlayerCharacter())
+        {
+            diag::count("ambi_test_npc");
+            return g_testNpcSkill ? bestSkill(c) : g_testNpcA;
+        }
         return stored(c);
     }
 
@@ -779,19 +1188,30 @@ namespace ambidex
     {
         if (c == NULL)
             return 0.0f;
+
+        float a = 0.0f;
+        bool has = lookup(c, a);
+        const char* from = "";
+        float floorA = authored(c, from);
+        if (has && !(floorA > a))
+            return a;
+        float before = has ? a : seedFor(c);
+        a = floorA > before ? floorA : before;
         {
             Lock l;
             std::map<Character*, float>::iterator it = g_amb.find(c);
-            if (it != g_amb.end())
+            if (it != g_amb.end() && !(a > it->second))
                 return it->second;
+            g_amb[c] = a;
         }
-        float seed = seedFor(c);
-        Lock l;
-        std::map<Character*, float>::iterator it = g_amb.find(c);
-        if (it != g_amb.end())
-            return it->second;
-        g_amb[c] = seed;
-        return seed;
+        if (floorA > before)
+        {
+            diag::count(from[0] == 'i' ? "ambi_authored_ini" : from[0] == 'l' ? "ambi_authored_list" : "ambi_authored_field");
+            if (takeDetail())
+                kit::Diag("ambi_authored").kv("who", c->displayName).kv("from", from).kv("value", floorA)
+                    .kv("was", before).kv("record", kit::recordId(c->getGameData())).emit();
+        }
+        return a;
     }
 
     Effective effective(Character* c)

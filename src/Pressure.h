@@ -1,6 +1,9 @@
 #pragma once
 
 #include <kenshi/Enums.h>
+#include <kenshi/util/hand.h>
+
+#include <vector>
 
 class Character;
 
@@ -16,4 +19,11 @@ namespace pressure
 
     int stacks(Character* target, Character* master);
     int maxStacks();
+
+    struct Shown
+    {
+        hand target, by;
+        int stacks;
+    };
+    void shown(std::vector<Shown>& out);
 }

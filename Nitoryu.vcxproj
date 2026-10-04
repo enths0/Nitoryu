@@ -75,9 +75,13 @@
     <ClCompile Include="src\Ui.cpp" />
     <ClCompile Include="src\Balance.cpp" />
     <ClCompile Include="src\Settings.cpp" />
+    <ClCompile Include="src\Foreign.cpp" />
+    <ClCompile Include="src\Hud.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Feedback.h" />
+    <ClInclude Include="src\Foreign.h" />
+    <ClInclude Include="src\Hud.h" />
     <ClInclude Include="src\Visual.h" />
     <ClInclude Include="src\Arms.h" />
     <ClInclude Include="src\Combat.h" />

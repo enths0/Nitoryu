@@ -263,4 +263,34 @@ namespace cfg
         kit::Diag("settings").kv("total", (int)COUNT).kv("record_found", g_found).kv("from_fcs", fromFcs)
             .kv("from_ini", fromIni).emit();
     }
+
+    int readIdValues(const std::string& iniPath, const char* section, const char* key, std::map<std::string, float>& out)
+    {
+        char ids[4096] = { 0 };
+        GetPrivateProfileStringA(section, key, "", ids, sizeof(ids), iniPath.c_str());
+        int bad = 0;
+        std::string cur;
+        for (const char* q = ids;; ++q)
+        {
+            if (*q != ',' && *q != '\0')
+            {
+                cur += *q;
+                continue;
+            }
+            size_t a = cur.find_first_not_of(" \t"), colon = cur.rfind(':');
+            if (a != std::string::npos)
+            {
+                size_t e = colon != std::string::npos && colon > a ? cur.find_last_not_of(" \t", colon - 1) : std::string::npos;
+                float v = colon != std::string::npos ? (float)atof(cur.c_str() + colon + 1) : -1.0f;
+                if (e == std::string::npos || e < a || !(v == v) || v < 0.0f || v > 1.0e6f)
+                    ++bad;
+                else
+                    out[cur.substr(a, e - a + 1)] = v;
+            }
+            cur.clear();
+            if (*q == '\0')
+                break;
+        }
+        return bad;
+    }
 }

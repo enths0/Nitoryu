@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 
 class Character;
@@ -19,6 +20,10 @@ namespace ambidex
     void setStored(Character* c, float a);
 
     std::string testText();
+
+    void setListSkills(const std::map<std::string, float>& byRecord);
+
+    std::string testNpcText();
 
     struct Effective
     {

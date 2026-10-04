@@ -9,6 +9,8 @@ namespace combat
     bool isOffHandTechnique(CombatTechniqueData* t);
     bool isTwinTechnique(CombatTechniqueData* t);
 
+    bool isRiposte(Character* c, CombatTechniqueData* t);
+
     int moveKind(CombatTechniqueData* t);
     int armsModeOf(CombatTechniqueData* t);
     int attackClip(CombatTechniqueData* t);

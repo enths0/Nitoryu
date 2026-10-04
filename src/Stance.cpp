@@ -42,6 +42,7 @@ namespace
     CRITICAL_SECTION g_lock;
     std::map<Character*, Cached> g_cache;
     std::set<Character*> g_playerOff;
+    std::set<Character*> g_playerAny;
     bool g_allowed[NUM_SKILL_TYPES] = { false };
     int g_forceTier = 0;
     float g_followUpChance = -1.0f;
@@ -58,6 +59,11 @@ namespace
     std::set<std::string> g_iniOptIn;
     std::set<std::string> g_optIn;
     int g_npcRecordLeft = 12;
+
+    const std::string PATH_KEY = "nitoryu path";
+    std::map<std::string, float> g_iniPath;
+    std::map<std::string, float> g_listPath;
+    std::set<std::string> g_pathLogged;
 
     struct Lock
     {
@@ -187,6 +193,39 @@ namespace
         return r;
     }
 
+    float pathFloor(Character* c, const char*& from)
+    {
+        static const char* const FROM[2][3] = { { "ini_character", "character", "list_character" },
+                                                { "ini_faction", "faction", "list_faction" } };
+        Faction* f = c->getFaction();
+        GameData* recs[2] = { c->getGameData(), f != NULL ? f->data : NULL };
+        for (int i = 0; i < 2; ++i)
+        {
+            if (recs[i] == NULL)
+                continue;
+            std::map<std::string, float>::const_iterator it = g_iniPath.find(recs[i]->stringID);
+            if (it != g_iniPath.end())
+            {
+                from = FROM[i][0];
+                return cap100(it->second);
+            }
+            float v = kit::fcsFloat(recs[i], PATH_KEY, -1.0f);
+            if (v == v && v >= 0.0f)
+            {
+                from = FROM[i][1];
+                return cap100(v);
+            }
+            Lock l;
+            it = g_listPath.find(recs[i]->stringID);
+            if (it != g_listPath.end())
+            {
+                from = FROM[i][2];
+                return cap100(it->second);
+            }
+        }
+        return -1.0f;
+    }
+
     stance::Info compute(Character* c, Weapon* mainOverride)
     {
         if (!g_layout)
@@ -223,7 +262,7 @@ namespace
 
         if (stance::weaponRefused(r.main) || stance::weaponRefused(r.off))
             return blank("weapon_refused");
-        if (!stance::weaponAllowed(r.main) || !stance::weaponAllowed(r.off))
+        if (!stance::weaponAllowedFor(c, r.main) || !stance::weaponAllowedFor(c, r.off))
             return blank("type_not_allowed");
         if (r.main->is2HandedOnly() || r.off->is2HandedOnly())
             return blank("two_handed_only");
@@ -269,6 +308,23 @@ namespace
         r.overload = amb.overload;
         r.dex = cap100(dex);
         r.dp = dpOf(s, dex, atk, def, amb.eff);
+
+        const char* pathFrom = "";
+        float pathMin = pathFloor(c, pathFrom);
+        int pathTier = pathMin >= 0.0f ? stance::tierOf(pathMin) : 0;
+        if (pathMin > r.dp)
+        {
+            diag::count(pathFrom[0] == 'i' ? "path_authored_ini" : pathFrom[0] == 'l' ? "path_authored_list" : "path_authored_field");
+            bool first;
+            {
+                Lock l;
+                first = g_pathLogged.size() < 24 && g_pathLogged.insert(recordIdOf(c->getGameData())).second;
+            }
+            if (first)
+                kit::Diag("path_authored").kv("who", c->displayName).kv("from", pathFrom).kv("value", pathMin)
+                    .kv("was", r.dp).kv("record", recordIdOf(c->getGameData())).emit();
+            r.dp = pathMin;
+        }
         if (g_forceTier > 0)
         {
 
@@ -284,6 +340,12 @@ namespace
         {
             r.tier = g_npcMaxTier;
             r.tierCap = "npc";
+        }
+        if (pathTier > r.tier)
+        {
+            r.tier = pathTier;
+            if (r.tier >= r.tierByDp)
+                r.tierCap = "";
         }
         if (g_forceTier > r.tier)
             r.tier = g_forceTier;
@@ -406,6 +468,10 @@ namespace stance
                 cur += *q;
         }
         g_optIn = g_iniOptIn;
+
+        int badPath = cfg::readIdValues(path, "NPC", "path", g_iniPath);
+        if (!g_iniPath.empty() || badPath > 0)
+            kit::Diag("npc_path").kv("from_ini", (int)g_iniPath.size()).kv("bad_entries", badPath).emit();
         applySettings();
     }
 
@@ -416,26 +482,57 @@ namespace stance
         GameData* d = ou->gamedata.getData(OPT_IN_RECORD);
         std::set<std::string> ids = g_iniOptIn;
         int fromData = 0;
-        if (d != NULL)
+
+        struct { const char* record; float skill; } LISTS[] = {
+            { OPT_IN_RECORD, -1.0f }, { "23-Nitoryu.mod", 40.0f }, { "24-Nitoryu.mod", 60.0f },
+            { "25-Nitoryu.mod", 80.0f }, { "26-Nitoryu.mod", 100.0f } };
+
+        std::map<std::string, float> skills, paths;
+        for (int r = 0; r < 5; ++r)
         {
+            GameData* rec = r == 0 ? d : ou->gamedata.getData(LISTS[r].record);
+            if (rec == NULL)
+                continue;
             const char* lists[] = { "squad", "squad2", "leader", "choosefrom list", "faction" };
             for (int i = 0; i < 5; ++i)
             {
-                const Ogre::vector<GameDataReference>::type* v = d->getReferenceListIfExists(lists[i]);
+                const Ogre::vector<GameDataReference>::type* v = rec->getReferenceListIfExists(lists[i]);
                 if (v == NULL)
                     continue;
                 for (size_t k = 0; k < v->size(); ++k)
-                    if (ids.insert((*v)[k].sid).second)
+                {
+                    const GameDataReference& ref = (*v)[k];
+                    if (ids.insert(ref.sid).second)
                         ++fromData;
+                    if (i < 2 && ref.values.value[1] >= 2)
+                    {
+                        float p = (float)ref.values.value[1];
+                        std::map<std::string, float>::iterator pa = paths.find(ref.sid);
+                        if (pa == paths.end())
+                            paths[ref.sid] = p;
+                        else if (p > pa->second)
+                            pa->second = p;
+                    }
+                    float own = i < 4 && ref.values.value[0] >= 2 ? (float)ref.values.value[0] : LISTS[r].skill;
+                    if (own < 0.0f)
+                        continue;
+                    std::map<std::string, float>::iterator at = skills.find(ref.sid);
+                    if (at == skills.end())
+                        skills[ref.sid] = own;
+                    else if (own > at->second)
+                        at->second = own;
+                }
             }
         }
+        ambidex::setListSkills(skills);
         bool changed;
         {
             Lock l;
-            changed = ids != g_optIn;
+            changed = ids != g_optIn || paths != g_listPath;
             if (changed)
             {
                 g_optIn = ids;
+                g_listPath = paths;
                 g_cache.clear();
             }
         }
@@ -444,7 +541,8 @@ namespace stance
             static bool missingLogged = false;
             if (d != NULL || !missingLogged)
                 kit::Diag("npc_opt_in").kv("record_found", d != NULL).kv("from_data", fromData)
-                    .kv("from_ini", (int)g_iniOptIn.size()).kv("total", (int)ids.size()).emit();
+                    .kv("from_ini", (int)g_iniOptIn.size()).kv("total", (int)ids.size())
+                    .kv("with_skill", (int)skills.size()).kv("with_path", (int)paths.size()).emit();
             if (d == NULL)
                 missingLogged = true;
         }
@@ -491,6 +589,51 @@ namespace stance
             return false;
         int v = kit::fcsInt(w->data, "nitoryu dual wield", 0);
         return v == 2 ? false : v == 1 ? true : allowed(w->category);
+    }
+
+    bool anyWeapon(Character* c)
+    {
+        Lock l;
+        return g_playerAny.find(c) != g_playerAny.end();
+    }
+
+    bool toggleAnyWeapon(Character* c)
+    {
+        Lock l;
+        g_cache.erase(c);
+        std::set<Character*>::iterator it = g_playerAny.find(c);
+        if (it == g_playerAny.end())
+        {
+            g_playerAny.insert(c);
+            return true;
+        }
+        g_playerAny.erase(it);
+        return false;
+    }
+
+    void setAnyWeapon(Character* c, bool on)
+    {
+        Lock l;
+        g_cache.erase(c);
+        if (on)
+            g_playerAny.insert(c);
+        else
+            g_playerAny.erase(c);
+    }
+
+    bool categoryAllowedFor(Character* c, WeaponCategory cat)
+    {
+        if (allowed(cat))
+            return true;
+        return (cat == SKILL_BLUNT || cat == SKILL_HACKERS) && c != NULL && c->isPlayerCharacter() && anyWeapon(c);
+    }
+
+    bool weaponAllowedFor(Character* c, Weapon* w)
+    {
+        if (w == NULL)
+            return false;
+        int v = kit::fcsInt(w->data, "nitoryu dual wield", 0);
+        return v == 2 ? false : v == 1 ? true : categoryAllowedFor(c, w->category);
     }
 
     int rigOf(Character* c)
@@ -603,6 +746,7 @@ namespace stance
         Lock l;
         g_cache.erase(c);
         g_playerOff.erase(c);
+        g_playerAny.erase(c);
     }
 
     float previewDP(Character* c)
@@ -618,7 +762,7 @@ namespace stance
         int nh = weaponsIn(inv, "hip", hip, 1);
         Weapon* a = nb >= 1 ? back[0] : NULL;
         Weapon* b = nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL;
-        if (a != NULL && b != NULL && stance::allowed(a->category) && stance::allowed(b->category))
+        if (a != NULL && b != NULL && stance::categoryAllowedFor(c, a->category) && stance::categoryAllowedFor(c, b->category))
         {
             float sa = st->getStat(stance::statFor(a->category), false);
             float sb = st->getStat(stance::statFor(b->category), false);
@@ -635,7 +779,10 @@ namespace stance
                         skill = v;
                 }
         }
-        return dpOf(skill < 0.0f ? 0.0f : skill, effDex(st), effAttack(st), effDefence(st), ambidex::effective(c).eff);
+        float dp = dpOf(skill < 0.0f ? 0.0f : skill, effDex(st), effAttack(st), effDefence(st), ambidex::effective(c).eff);
+        const char* from = "";
+        float pathMin = pathFloor(c, from);
+        return pathMin > dp ? pathMin : dp;
     }
 
     Preview preview(Character* c)
@@ -647,6 +794,10 @@ namespace stance
         p.tier = capByAmbi(p.tierByDp, amb);
         if (c != NULL && !c->isPlayerCharacter() && p.tier > g_npcMaxTier)
             p.tier = g_npcMaxTier;
+        const char* from = "";
+        float pathMin = c != NULL ? pathFloor(c, from) : -1.0f;
+        if (pathMin >= 0.0f && tierOf(pathMin) > p.tier)
+            p.tier = tierOf(pathMin);
         if (g_forceTier > p.tier)
             p.tier = g_forceTier;
         p.nextAmbi = p.tier < p.tierByDp && amb < tierMinAmbi(p.tier) ? tierMinAmbi(p.tier) : 0.0f;
@@ -667,8 +818,32 @@ namespace stance
         int nh = weaponsIn(inv, "hip", hip, 1);
         a = nb >= 1 ? back[0] : NULL;
         b = nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL;
-        return a != NULL && b != NULL && stance::allowed(a->category) && stance::allowed(b->category)
+        return a != NULL && b != NULL && stance::categoryAllowedFor(c, a->category) && stance::categoryAllowedFor(c, b->category)
             && !a->is2HandedOnly() && !b->is2HandedOnly();
+    }
+
+    bool needsAnyWeapon(Character* c)
+    {
+        Inventory* inv = c != NULL ? c->getInventory() : NULL;
+        if (inv == NULL)
+            return false;
+        Weapon* back[2] = { NULL, NULL };
+        Weapon* hip[1] = { NULL };
+        int nb = weaponsIn(inv, "back", back, 2);
+        int nh = weaponsIn(inv, "hip", hip, 1);
+        Weapon* w[2] = { nb >= 1 ? back[0] : NULL, nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL };
+        bool locked = false;
+        for (int i = 0; i < 2; ++i)
+        {
+            if (w[i] == NULL || w[i]->is2HandedOnly() || weaponRefused(w[i]))
+                return false;
+            if (weaponAllowed(w[i]))
+                continue;
+            if (w[i]->category != SKILL_BLUNT && w[i]->category != SKILL_HACKERS)
+                return false;
+            locked = true;
+        }
+        return locked;
     }
 
     bool hasPair(Character* c)

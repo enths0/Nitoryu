@@ -27,9 +27,12 @@ to remove it, just disable it. saves stay loadable, characters only lose their D
 ## How to use it
 
 - Put **two weapons on a character's back** (or one on the back, one on the hip) and draw. The drawn one goes to the right hand, the other to the left. A weapon that takes a full slot can be part of a pair too.
-- **Katanas and sabres** pair, also one of each (blunt can be switched on in `[Weapons] categories`). Heavy weapons, hackers, polearms and bows don't. A weapon without a left-hand mesh (`bare sword`) can't be the second blade, that pair fights with one.
+- **Katanas and sabres** pair, also one of each. Blunt and hackers can be switched on (`[Weapons] categories=0,1,2,4`), but I haven't tested them and they have no moves of their own. Heavy weapons, polearms and bows never pair. A weapon without a left-hand mesh (`bare sword`) can't be the second blade, that pair fights with one.
 - **The button** on the back weapon slot in the inventory (crossed blades = on, one grey blade = off) turns the dual stance on and off for that character. The choice is saved. No hotkey by default, `[UI] hotkey=alt+n` adds one.
+- **The second button** next to it (a blade crossed with a club) shows up on a character who carries two blunt weapons or hackers, or one of them with a katana or a sabre. Click it and this character fights with them as a pair, no ini editing. Saved with the character. Same as the `categories` switch: I haven't tested them and they have no moves of their own. `[UI] any_weapon_button=0` hides it.
+- Hold the mouse over either button and it says what it does. Nothing beyond blunt and hackers will ever be supported: heavy weapons, polearms and bows are two-handed. `[UI] button_tips=0` turns the text off.
 - Everything else happens by itself in a fight: the fighter picks its strikes, parries and moves by its rank.
+- **Marks above the head** show the rank skills at work, no text: a wave with a bar that runs out is flow, a loop is a Mugen chain waiting for its twin strike, diamonds over an enemy are pressure stacks (red at full pressure). They show for the characters you have selected. What each one means and gives is in the Dual Wielding description in the stats window, next to the Path's formula. `[Marks] marks=2` shows them for all your characters, `marks=0` turns them off.
 
 ## The skill: Dual Wielding and the Path
 
@@ -149,7 +152,7 @@ three buildings, mkI, mkII and mkIII, that train Dual Wielding up to 10 / 20 / 3
 in vanilla a character with a crippled right arm drops to martial arts. with Dual Wielding 50+ and a working left arm it keeps fighting with a one-handed katana or sabre in the **left hand**, also with the right arm cut off. it works with one weapon or a pair (one blade is used then).
 
 - At Dual Wielding 50: 70% damage, 85% attack and block speed, -10 defence when blocking. The penalties fade to nothing at 100.
-- Every move is mirrored, the crippled arm hangs down.
+- Every move is mirrored, the crippled arm hangs down and swings as the body moves (`[Animations] limp_arm_swing=0` keeps it still).
 - It trains Dual Wielding.
 
 ## NPCs
@@ -157,6 +160,7 @@ in vanilla a character with a crippled right arm drops to martial arts. with Dua
 - An NPC carrying an allowed pair fights with both blades if it has Dexterity 30, both weapon skills 30 and strength of at least half the pair's weight (`[NPC] dual=all`).
 - NPCs don't go above rank 3 (`[NPC] max_tier`).
 - `[NPC] dual=authored` leaves only the NPCs another mod opted in, `off` none.
+- An NPC starts with Dual Wielding at a quarter of its best weapon skill. To give one more, `[NPC] skill=<string id>:<value>` in the ini: the id of a CHARACTER or of a whole FACTION, comma separated. It starts at that value (one already in your save is raised to it) and grows from there.
 
 ## Other mods' animations
 
@@ -172,13 +176,13 @@ all made for two blades, each can be turned off in `[Animations]` (then the mirr
 2. **Dual sheathe:** a flick, the right blade home first, then the left (to the back or the hip). Only the look takes a moment, the game sheathes at once, so first aid and carrying start as in vanilla. `dual_sheathe`.
 3. **Blood flick:** a fighter who sheathes right after a won fight (its enemy is dead, down or knocked out) first flicks both blades down and out, pauses, then sheathes. `dual_chiburi`.
 4. **A stance per rank:** in a fight, when the fighter isn't attacking, blocking or running, it holds the stance of its rank, no switching: Deshi hides behind the swords, Bushi holds a drilled guard, Ronin the upper guard, Kenshi keeps one blade hidden, Kensei rests a blade on the shoulder. Below rank 1 it's the game's guard. Walking up to the enemy keeps the stance's arms. `idle_stances`.
-5. **Running with the blades:** both trailing behind, or the left one forward. `run_hold`.
+5. **Running with the blades:** both trailing behind, the body leaning into the run. `run_hold`.
 6. **Main-hand blocks by direction:** the guard follows the blow. From the left or the right both blades together, leaning to that side (**angled block**), from above the right blade flat over the head (**overhead block**), from the front the **scissor X** or a one-blade block (the right blade high over the head, the left one low), at random. `angled_block`, `main_block`, `scissor_block`, `main_block_single`.
 7. **A hit taken on the block:** when a blow lands on the blades, the guard gets pushed back once and comes back. `dual_block` for the X.
 8. **Guard broken:** when a blow gets through a block, the blades get knocked apart, the body takes it and steps back. `guard_broken`.
 9. **A hit that gets through:** if a blow lands while the fighter wasn't blocking, it rocks back once and keeps both blades. `hit_taken`.
 10. **Second-blade parry:** a block with the left blade alone, the free blade low behind or held forward (`offhand_block_style`: mix, low, forward). `offhand_block`; with it off, the left blade is lifted over the head (`high_block`).
-11. **Off-hand rising cut** and **twin sweep:** the two strikes with their own animations. `off_rising_cut`, `twin_sweep` (0 = the move is not used).
+11. **Off-hand rising cut**, **twin sweep**, **one-two**, **off-hand backhand**, **beat and cut** and **double chop:** the six strikes with their own animations. `off_rising_cut`, `twin_sweep`, `one_two`, `off_backhand`, `beat_cut`, `double_chop` (0 = the move is not used).
 12. **Cross finisher**, **Dash slash** and **Spin:** whole-body animations for the three specials. `cross_finisher`, `dash_slash`, `spin`.
 
 if the angled block leans away from the blow in your game, set `[Animations] angled_block_swap=1`.
@@ -190,11 +194,11 @@ a lot of you asked for levers in FCS, so most of Nitoryu is data. no C++ needed 
 1. **Balance.** About 100 settings sit on GLOBAL CONSTANTS as `nitoryu ...` fields: the Path weights, ranks, every curve, penalties, speed, parries, pressure, flow, Mugen, pair bonuses, NPC rules. Change a field in your mod and it applies to everyone who runs it. A player's own `Nitoryu.ini` still wins if they set the same thing there.
 2. **Moves.** A dual-wield move is a COMBAT_TECHNIQUE record with a few `nitoryu` fields: what it is (off-hand strike, twin strike, finisher, a move from distance), cooldown, distance, which of my clips goes over it. My twelve moves are made exactly this way, so copy one and change it.
 3. **Weapons.** `nitoryu dual wield` on a WEAPON lets it into a pair or keeps it out, whatever its category. `nitoryu off hand damage` changes its damage as the second blade, `nitoryu pair length` sets its role in a pair (long or short).
-4. **NPCs.** Tick `nitoryu dual wielder` on your CHARACTER or FACTION and they fight with two blades when they carry a pair, with no stat minimums and no rank cap, even when the player has `[NPC] dual=authored`. The older ways still work: add them to the squad "Nitoryu dual wielders (opt-in list)" (it never spawns), or `[NPC] opt_in=<string id>,<string id>` in the ini.
+4. **NPCs.** Tick `nitoryu dual wielder` on your CHARACTER or FACTION and they fight with two blades when they carry a pair, with no stat minimums and no rank cap, even when the player has `[NPC] dual=authored`. The older ways still work: add them to the squad "Nitoryu dual wielders (opt-in list)" (it never spawns), or `[NPC] opt_in=<string id>,<string id>` in the ini. To set their Dual Wielding skill (the number in the stats window) in plain FCS, add the character or the faction to one of the squads "Nitoryu dual wielders (Dual Wielding 40 / 60 / 80 / 100)", or type an exact number as the character's first value there, so a dual-wield master doesn't need pumped stats. The field `nitoryu dual wielding` and `[NPC] skill=<string id>:<value>` in the ini do the same. For an NPC that has to be a master whatever its stats, set its lowest Path too: the second value of the character in those squads, the field `nitoryu path`, or `[NPC] path=<string id>:<value>`.
 5. **Races.** `nitoryu rig` on a RACE, if my mirroring looks wrong on your skeleton: 1 puts the second blade in a fixed left-hand grip, 2 turns Nitoryu off for that race.
 6. **Training.** `nitoryu pair dummy` on a training BUILDING makes it train Dual Wielding up to its `output rate`.
 
-to see the fields with tooltips in FCS you need FCS Extended (it loads `fcs.def` from the mod folder, the same way Second Life of Kenshi's own fields show up). players don't need it. every field with its description is in `fcs.def` next to this file; in the game data the skill is still called Ambidexterity and the Path "DP".
+to see the fields with tooltips in FCS you need FCS Extended (it loads `fcs.def` from the mod folder, the same way Second Life of Kenshi's own fields show up). players don't need it. the manual is `FCS.md` next to this file (how to add a move, every field, my twelve records, how to set your NPCs' Dual Wielding in plain FCS; in Russian: `FCS_RU.md`), the settings table is `FCS-settings.md`, and every field with its description is in `fcs.def`; in the game data the skill is still called Ambidexterity and the Path "DP".
 
 one thing isn't there yet: a track that animates both arms itself and plays as authored. for now a move is a right-hand track that I mirror or put on both blades.
 
@@ -202,12 +206,13 @@ one thing isn't there yet: a track that animates both arms itself and plays as a
 
 `Nitoryu.ini` in the mod folder, read when the game starts. it's short: the switches on top, then the balance keys with their defaults. the balance keys are shipped commented out (with a `;`), because they also live in the game data and a mod can change them. remove the `;` and your value wins. the ones you'll most likely want:
 
-- `[General] language`: `auto`, `en`, `ru`, ...
+- `[General] language`: `auto`, `en`, `ru`, `zh`, ... (the Chinese texts are by 7 from the Workshop discussions, thanks!)
 - `[General] diag`: how much goes into `RE_Kenshi_log.txt`: `off`, `normal` (default), `stage`, `verbose`.
-- `[UI] toggle_button`, `button_size`, `hotkey`.
-- `[Stats] rank_colours`, `rank_up_message`.
+- `[UI] toggle_button`, `any_weapon_button`, `button_tips`, `button_size`, `hotkey`.
+- `[Stats] rank_colours`, `rank_up_message`, `group` (where the Dual Wielding line sits: 1 Weapons / 2 Combat).
+- `[Marks] marks` (0 / 1 selected / 2 mine / 3 everyone), `place` (2 heads / 1 portraits / 3 both), `flow`, `mugen`, `pressure`, `tips`, `size`, `height`.
 - `[Animations]`: each of my animations on or off.
-- `[NPC] dual` (`all` / `authored` / `off`) and `max_tier`.
+- `[NPC] dual` (`all` / `authored` / `off`), `max_tier`, `opt_in` and `skill`.
 - `[Weapons] categories`: what can pair.
 - `[Guard] cooldown_ms` (one parry per game second) and `arc_deg` (110 = front and flanks).
 - `[Moves] dash_cooldown_ms` (12000), `spin_cooldown_ms` (20000), `double_hit_cooldown_ms` (5000), `no_repeat`.

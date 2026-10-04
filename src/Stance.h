@@ -42,6 +42,14 @@ namespace stance
     bool weaponAllowed(Weapon* w);
     bool weaponRefused(Weapon* w);
 
+    bool anyWeapon(Character* c);
+    bool toggleAnyWeapon(Character* c);
+    void setAnyWeapon(Character* c, bool on);
+    bool categoryAllowedFor(Character* c, WeaponCategory cat);
+    bool weaponAllowedFor(Character* c, Weapon* w);
+
+    bool needsAnyWeapon(Character* c);
+
     enum Rig { RIG_AUTO = 0, RIG_FIXED_GRIP = 1, RIG_NEVER = 2 };
     int rigOf(Character* c);
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 
 #include "SettingsDef.h"
@@ -35,4 +36,6 @@ namespace cfg
     const char* fcsKey(Id id);
 
     void log();
+
+    int readIdValues(const std::string& iniPath, const char* section, const char* key, std::map<std::string, float>& out);
 }

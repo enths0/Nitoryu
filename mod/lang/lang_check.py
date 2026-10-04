@@ -61,6 +61,9 @@ def check(path, ref, limits):
     for key in sorted(set(texts) - set(ref)):
         errors.append("ERROR: unknown key (never shown; a typo?): %s" % key)
     for key in sorted(set(texts) & set(ref)):
+        if not texts[key]:
+            notes.append("empty (English is shown): %s" % key)
+            continue
         want = sorted(PLACEHOLDER.findall(ref[key]))
         got = sorted(PLACEHOLDER.findall(texts[key]))
         if want != got:
@@ -69,8 +72,6 @@ def check(path, ref, limits):
         shown = texts[key].replace("\\n", "\n")
         if limit and max(len(part) for part in shown.split("\n")) > limit:
             notes.append("too long for its place (%d > max %d): %s" % (len(shown), limit, key))
-        if not texts[key]:
-            notes.append("empty (English is shown): %s" % key)
     done = len([k for k in ref if texts.get(k)])
     print("%s: %d of %d texts (%d%%)" % (os.path.basename(path), done, len(ref), 100 * done // max(1, len(ref))))
     for line in errors + notes:
@@ -79,6 +80,8 @@ def check(path, ref, limits):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")    # a console that cannot print the language
     ref_path = os.path.join(HERE, "en.ini")
     ref, limits, problems = parse(ref_path)
     if not ref:

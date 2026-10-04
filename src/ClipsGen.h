@@ -8,7 +8,6 @@
     X(CLIP_DASH, "nitoryu dash slash", "dash_slash", "dash_slash", "l3_dash", "l3_dash", true, "flyknee") \
     X(CLIP_DRAW_HIP, "nitoryu dual draw hip", "hip_draw", "dual_draw", "l3_draw", "l3_draw_hip", false, NULL) \
     X(CLIP_RUN_TRAIL, "nitoryu run trail", "run_trail", "run_hold", "l3_run", "l3_run_trail", false, NULL) \
-    X(CLIP_RUN_LEAD, "nitoryu run lead", "run_lead", "run_hold", "l3_run", "l3_run_lead", false, NULL) \
     X(CLIP_SPIN, "nitoryu spin", "spin", "spin", "l3_spin", "l3_spin", true, "flyknee") \
     X(CLIP_OFF_RISING, "nitoryu off rising cut", "off_rising_cut", "off_rising_cut", "l3_off_rising", "l3_off_rising", true, "chop left") \
     X(CLIP_TWIN_SWEEP, "nitoryu twin sweep", "twin_sweep", "twin_sweep", "l3_twin_sweep", "l3_twin_sweep", true, "ma chudan") \
@@ -18,9 +17,6 @@
     X(CLIP_MAIN_IMPACT, "nitoryu main block impact", "main_impact", "main_block_single", "l3_main_block", "l3_main_impact", true, NULL) \
     X(CLIP_OFF_BLOCK, "nitoryu offhand block", "offhand_block", "offhand_block", "l3_offhand_block", "l3_offhand_block", true, NULL) \
     X(CLIP_OFF_BLOCK_FWD, "nitoryu offhand block forward", "offhand_block_forward", "offhand_block", "l3_offhand_block_fwd", "l3_off_block_fwd", true, NULL) \
-    X(CLIP_STANCE_HILO, "nitoryu stance high low", "stance_hilo", "idle_stances", "l3_stance_hilo", "l3_stance_hilo", true, NULL) \
-    X(CLIP_STANCE_REV, "nitoryu stance reverse grip", "stance_rev", "idle_stances", "l3_stance_rev", "l3_stance_rev", true, NULL) \
-    X(CLIP_STANCE_HILO_WALK, "nitoryu stance high low walk", "stance_hilo_walk", "idle_stances", "l3_stance_hilo_walk", "l3_stance_hilo_walk", false, NULL) \
     X(CLIP_ANGLED_L, "nitoryu angled block left", "angled_block_left", "angled_block", "l3_angled_left", "l3_angled_l", false, NULL) \
     X(CLIP_ANGLED_R, "nitoryu angled block right", "angled_block_right", "angled_block", "l3_angled_right", "l3_angled_r", false, NULL) \
     X(CLIP_ANGLED_L_IMPACT, "nitoryu angled block left impact", "angled_left_impact", "angled_block", "l3_angled_left_impact", "l3_angled_l_impact", true, NULL) \
@@ -39,4 +35,8 @@
     X(CLIP_STANCE_BUSHI, "nitoryu stance bushi", "stance_bushi", "idle_stances", "l3_stance_bushi", "l3_stance_bushi", true, NULL) \
     X(CLIP_STANCE_RONIN, "nitoryu stance ronin", "stance_ronin", "idle_stances", "l3_stance_ronin", "l3_stance_ronin", true, NULL) \
     X(CLIP_STANCE_KENSHI, "nitoryu stance kenshi", "stance_kenshi", "idle_stances", "l3_stance_kenshi", "l3_stance_kenshi", true, NULL) \
-    X(CLIP_STANCE_KENSEI, "nitoryu stance kensei", "stance_kensei", "idle_stances", "l3_stance_kensei", "l3_stance_kensei", true, NULL)
+    X(CLIP_STANCE_KENSEI, "nitoryu stance kensei", "stance_kensei", "idle_stances", "l3_stance_kensei", "l3_stance_kensei", true, NULL) \
+    X(CLIP_ONE_TWO, "nitoryu one two", "one_two", "one_two", "l3_one_two", "l3_one_two", true, "downward combo") \
+    X(CLIP_OFF_BACKHAND, "nitoryu off backhand", "off_backhand", "off_backhand", "l3_off_backhand", "l3_off_backhand", true, "chop left") \
+    X(CLIP_BEAT_CUT, "nitoryu beat cut", "beat_cut", "beat_cut", "l3_beat_cut", "l3_beat_cut", true, "ma chudan") \
+    X(CLIP_DOUBLE_CHOP, "nitoryu double chop", "double_chop", "double_chop", "l3_double_chop", "l3_double_chop", true, "ma chudan")

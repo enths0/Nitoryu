@@ -38,6 +38,7 @@ namespace arms
     void setClipOn(Clip k, bool on);
     void setOffBlockStyle(int style);
     void setAngledSwap(bool on);
+    void setLimpSwing(bool on);
     bool clipOn(Clip k);
 
     void playClip(Character* c, Clip k, double startMs);
@@ -57,6 +58,7 @@ namespace arms
         bool inCombat;
         bool running;
         bool moving;
+        bool foreign;
         int rank;
         int attackClip;
         float attackProgress;

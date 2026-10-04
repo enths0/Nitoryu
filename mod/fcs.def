@@ -119,6 +119,29 @@ nitoryu split reach: 2.5 "The flanker must be within this x the second blade's r
 nitoryu split attacker ms: 8000 "A flanker is an enemy who attacked the fighter within this many milliseconds of game time."
 Nitoryu 13 training:
 nitoryu pair dummy training: True "A training building whose record is ticked nitoryu pair dummy trains Dual Wielding up to its output rate, for a character carrying an allowed pair."
+nitoryu dual wielding xp parry: 2.0 "Dual Wielding XP by deed: a parry with the second blade trains Dual Wielding this many times more than a plain block (the game gives a block a tenth of a hit's weapon XP). 1 = as a block."
+nitoryu dual wielding xp twin: 1.5 "Dual Wielding XP by deed: a hit that lands from a move of both blades (a twin strike, a finisher, an opener) trains Dual Wielding this many times more. 1 = as any hit."
+nitoryu dual wielding xp riposte: 1.5 "Dual Wielding XP by deed: the impacts of a riposte (the attack that answers a block) train Dual Wielding this many times more. With a twin riposte the higher of the two factors counts. 1 = as any attack."
+nitoryu dual wielding xp outnumbered: 1.5 "Dual Wielding XP by deed: while two or more enemies attack the fighter, everything trains Dual Wielding this many times more (on top of the factors above). 1 = off."
+nitoryu dual wielding xp outnumbered ms: 5000 "The fighter is outnumbered while a second enemy's attack reached it (blocked or landed) within this many milliseconds of game time."
+nitoryu dual wielding xp hit taken: 0.25 "A hit taken in the dual stance trains Dual Wielding: this share of the Melee Defence XP the game gives for that hit, which is higher the stronger the attacker is. 0 = off."
+Nitoryu 14 other plugins:
+nitoryu foreign control: "auto" "Another plugin that plays swings, blocks and weapon switches itself, outside the game's own combat (a direct-control mod): off = Nitoryu ignores it; auto = Nitoryu's animations give way only when one of the plugins below is loaded; on = always."
+nitoryu foreign control plugins: "ShoulderCombat.dll" "DLL file names, comma separated. With foreign control on auto, one of them loaded turns the giving way on."
+nitoryu foreign control hold ms: 6000 "After the other plugin's last swing or block, for this many milliseconds of game time the run animation waits for a steady run (run ms). A draw or a sheathe under its swing gets no animation, the blades follow at once."
+nitoryu foreign control run ms: 300 "In that time the run animation starts only after this many milliseconds of running without a stop."
+Nitoryu 15 marks:
+nitoryu marks: 1 "Marks that show the rank skills at work, without text. 0 = none, 1 = the characters the player has selected (and the enemies they press), 2 = all of the player's characters, 3 = every fighter."
+nitoryu marks place: 2 "Where the marks show: 2 = above the heads, 1 = on the squad portraits (all of the player's characters, whatever nitoryu marks says), 3 = both."
+nitoryu marks flow: True "The flow mark: a wave for a fighter in flow, with a bar under it that runs out with the flow."
+nitoryu marks mugen: True "The Mugen mark: a loop for a fighter whose chained twin strike is waiting."
+nitoryu marks pressure: True "The pressure mark: one pip per stack, on the portrait of the fighter who presses (the most stacks on one enemy) or above the pressured fighter; the pips change colour at full pressure."
+nitoryu marks size: 22 "Above the heads: side of a mark in pixels (8-64). A pressure pip is half of it. On a portrait the marks follow the portrait's size."
+nitoryu marks height: 24.0 "Above the heads: how far above a character's feet the marks sit, in game units, when the character's name is not shown (or on name is 0)."
+nitoryu marks on name: True "Above the heads: the marks sit right on top of the game's name label over the character when it is shown; 0 = always at height."
+nitoryu marks tips: False "The mouse over a mark shows the skill's name and what it does."
+Nitoryu 16 stats window:
+nitoryu stats line group: 1 "Where the Dual Wielding line sits in the character's stats window: 1 = at the end of the Weapons group; 2 = in the Combat group, after its last skill (the Ranged group moves down a row)."
 
 // Nitoryu's fields on record types other than CONSTANTS. Hand-written; the settings generator appends this file
 // to the generated [CONSTANTS] block of mod/fcs.def. The grammar is the game's own fcs.def.
@@ -131,6 +154,7 @@ NIT_ambidexterity: -1.0 "Nitoryu: Ambidexterity [0-100], the two-blade skill. -1
 Nitoryu:
 nitoryu dual wield: 0 "This weapon in a two-weapon pair. 0 = by its category (the setting nitoryu weapon categories). 1 = allowed whatever its category. 2 = refused: a pair with it fights one-handed. Two-handed-only weapons are always refused."
 nitoryu off hand damage: 1.0 "Multiplier on this weapon's damage when it strikes as the second blade (on top of the off-hand damage curve). 1 = none."
+nitoryu dual wielding xp: 1.0 "Multiplier on the Dual Wielding XP a fighter gains while this weapon is in its pair (both weapons' values multiply). 1 = none; above 1 = a training weapon."
 nitoryu pair length: 0.0 "The blade length Nitoryu reads to tell what pair this weapon makes (long + short, or equal blades). 0 = the weapon's own length."
 
 // 0.42: a training building for Dual Wielding (docs/FCS.md, "The pair dummy").
@@ -141,6 +165,8 @@ nitoryu pair dummy: False "True = this training building (functionality BF_TRAIN
 [CHARACTER,FACTION]
 Nitoryu:
 nitoryu dual wielder: False "True = this character (or every member of this faction) fights with two weapons when it carries an allowed pair, with no stat minimums and no tier cap, even when players set NPC dual wielding to authored. The same as adding the record to the squad Nitoryu dual wielders (opt-in list)."
+nitoryu dual wielding: -1.0 "This character's (or every member of this faction's) Dual Wielding skill, the same number the stats window shows. -1 = not set (the mod starts it at the ambidexterity seed x the best weapon skill). The character starts at this value, one already in a save is raised to it, and it grows from there. The CHARACTER's own value wins over its FACTION's."
+nitoryu path: -1.0 "This character's (or every member of this faction's) lowest Path, 0-100, the number the Dual Wielding hover shows. -1 = not set (the Path comes from its stats). With a value its Path is never below it and it holds the rank of that Path (20 / 40 / 60 / 75 / 90 as shipped) whatever its Dual Wielding and the NPC rank cap say; stats above it still count. The damage still comes from its weapon skill. The CHARACTER's own value wins over its FACTION's."
 
 [RACE]
 Nitoryu:
@@ -151,9 +177,9 @@ nitoryu rig: 0 "How Nitoryu treats this race's skeleton. 0 = automatic: the seco
 // Nitoryu draws it for dual fighters, with `min skill` as the dual proficiency needed and `chance` as its weight.
 [COMBAT_TECHNIQUE]
 Nitoryu:
-nitoryu move: 0 "0 = not a Nitoryu move. 1 = a strike of the second blade. 2 = a twin strike (both blades in one swing). 3 = a finisher (special: on a staggering or fully pressured enemy). 4 = an opener (special: from a distance). Needs animal = ATTACK_NULL and every weapon flag off; min skill is the dual proficiency needed; chance is its weight, and among finishers or openers the higher chance goes first."
+nitoryu move: 0 "0 = not a Nitoryu move. 1 = a strike of the second blade. 2 = a twin strike (both blades in one swing). 3 = a finisher (special: on a staggering or fully pressured enemy, or right after the fighter blocked). 4 = an opener (special: from a distance). Needs animal = ATTACK_NULL and every weapon flag off; min skill is the dual proficiency needed; chance is its weight, and among finishers or openers the higher chance goes first."
 nitoryu arms: 0 "How the track is played. 0 = by the move: a strike is mirrored to the left hand, the others play on both blades. 1 = mirrored to the left hand (the right blade keeps its guard). 2 = both blades (the left arm mirrors the right). 3 = main hand only (the left arm keeps its guard)."
-nitoryu clip: "" "One of Nitoryu's own animations laid over the track while the move plays: cross_finisher, dash_slash, spin, off_rising_cut, twin_sweep. Empty = none (the track alone, mirrored or on both blades)."
+nitoryu clip: "" "One of Nitoryu's own animations laid over the track while the move plays: cross_finisher, dash_slash, spin, off_rising_cut, twin_sweep, one_two, off_backhand, beat_cut, double_chop. Empty = none (the track alone, mirrored or on both blades)."
 nitoryu needs clip: False "True = the move is not used while its clip is switched off in Nitoryu.ini [Animations]."
 nitoryu echo: False "True = every impact of the move is followed by a hit of the second blade (two impacts = four hits). For a move whose track swings both blades together; leave it off when the record already has a left-arm impact (limb = 0)."
 nitoryu cooldown ms: 0 "Finisher or opener: a fighter uses this move at most once per this many milliseconds of game time."

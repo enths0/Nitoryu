@@ -76,6 +76,12 @@ namespace
     const float STANCE_BODY_S = 0.20f;
     const float ROOT_EASE_S = 0.25f;
 
+    const float HANG_GRAVITY = 109.0f;
+    const float HANG_DAMP = 3.5f;
+    const float HANG_SHOULDER_COS = 0.643f;
+    const float HANG_ELBOW_COS = 0.5f;
+    bool g_limpSwing = true;
+
     const float CLIP_SWAP_S = 0.10f;
     int g_offBlockStyle = 0;
     const float ATTACK_BLEND_S = 0.35f;
@@ -85,6 +91,8 @@ namespace
     std::vector<std::string> g_retimeLog;
 
     const char* L3_FILE[2] = { "Nitoryu_L3_male.skeleton", "Nitoryu_L3_female.skeleton" };
+
+    const char* L3_DIR[2] = { "\\male_skeleton", "\\female_skeleton" };
     Ogre::SkeletonPtr g_l3Skel[2];
     int g_l3State[2] = { 0, 0 };
     std::string g_l3Error[2];
@@ -113,6 +121,7 @@ namespace
         std::vector<unsigned char> clipBone;
         std::vector<unsigned char> legBone;
         int root;
+        int thigh[2];
         std::vector<Ogre::Quaternion> bindQ;
         std::vector<Ogre::Vector3> bindP;
     };
@@ -162,17 +171,26 @@ namespace
         float blendDur;
         int appliedAttack;
         bool running;
+        bool foreign;
         int runClip;
         double runStart;
         float runW;
         double runLast;
         bool runCounted;
+        Ogre::Animation* runBase;
+        bool runBaseTried;
+        float runPhase;
+        bool runLocked;
+        bool runPhaseCounted;
 
         bool moving;
         int stCur, stPrev;
         double stStart, stPrevStart, stLast;
         int rank;
         float stW, stX, stBody;
+
+        Ogre::Vector3 hangE, hangH, hangVE, hangVH;
+        double hangT;
         int sex;
         const std::set<std::string>* tracks;
     };
@@ -342,6 +360,8 @@ namespace
         rig.clipBone.assign(n, 0);
         rig.legBone.assign(n, 0);
         rig.root = -1;
+        rig.thigh[0] = handleOf(sk, "Bip01 L Thigh");
+        rig.thigh[1] = handleOf(sk, "Bip01 R Thigh");
         rig.bindQ.resize(n);
         rig.bindP.resize(n);
         for (int i = 0; i < n; ++i)
@@ -585,14 +605,78 @@ namespace
         q[a] = parQ.Inverse() * v.getRotationTo(dir) * aq;
     }
 
-    void hangRight(const Rig& rig, std::vector<Ogre::Quaternion>& q, std::vector<Ogre::Vector3>& p)
+    void hangPoint(Ogre::Vector3& x, Ogre::Vector3& v, const Ogre::Vector3& pivot, float len, const Ogre::Vector3& g,
+                   const Ogre::Vector3& outward, const Ogre::Vector3& axis, float maxCos, float keep, float h)
     {
+        Ogre::Vector3 old = x;
+        v = (v + g * h) * keep;
+        x += v * h;
+        Ogre::Vector3 d = x - pivot;
+        if (d.length() < 1e-5f)
+            d = axis;
+        d.normalise();
+        float in = -d.dotProduct(outward);
+        if (in > 0.0f)
+            d = (d + outward * in).normalisedCopy();
+        float c = d.dotProduct(axis);
+        if (c < maxCos)
+        {
+            Ogre::Vector3 side = d - axis * c;
+            if (side.length() < 1e-5f)
+                d = axis;
+            else
+                d = (axis * maxCos + side.normalisedCopy() * std::sqrt(1.0f - maxCos * maxCos)).normalisedCopy();
+        }
+        x = pivot + d * len;
+        v = (x - old) / h;
+    }
+
+    void hangRight(State& s, std::vector<Ogre::Quaternion>& q, std::vector<Ogre::Vector3>& p)
+    {
+        const Rig& rig = s.rig;
         if (!rig.canUncross)
             return;
 
-        Ogre::Vector3 down = (-rig.upM - rig.normal * 0.12f).normalisedCopy();
-        aimSegment(rig, rig.ru, rig.rf, down, q, p);
-        aimSegment(rig, rig.rf, rig.rh, down, q, p);
+        Ogre::Vector3 rest = (-rig.upM - rig.normal * 0.12f).normalisedCopy();
+        Ogre::Quaternion tq;
+        Ogre::Vector3 sh, el, ha;
+        modelXf(rig, rig.ru, q, p, tq, sh);
+        modelXf(rig, rig.rf, q, p, tq, el);
+        modelXf(rig, rig.rh, q, p, tq, ha);
+        float l1 = (el - sh).length(), l2 = (ha - el).length();
+        if (!g_limpSwing || l1 < 1e-4f || l2 < 1e-4f)
+        {
+            aimSegment(rig, rig.ru, rig.rf, rest, q, p);
+            aimSegment(rig, rig.rf, rig.rh, rest, q, p);
+            return;
+        }
+        double now = defense::frameMs();
+        float dt = s.hangT < 0.0 ? -1.0f : (float)(now - s.hangT) / 1000.0f;
+        s.hangT = now;
+        if (dt < 0.0f || dt > 0.5f)
+        {
+            s.hangE = sh + rest * l1;
+            s.hangH = s.hangE + rest * l2;
+            s.hangVE = s.hangVH = Ogre::Vector3::ZERO;
+            diag::count("arms_limp_reset");
+        }
+        else if (dt > 0.0f)
+        {
+            int steps = std::min(8, std::max(1, (int)std::ceil(dt * 90.0f)));
+            float h = dt / (float)steps;
+            float keep = std::max(0.0f, 1.0f - HANG_DAMP * h);
+            Ogre::Vector3 g = -rig.upM * HANG_GRAVITY;
+            for (int k = 0; k < steps; ++k)
+            {
+                hangPoint(s.hangE, s.hangVE, sh, l1, g, -rig.normal, rest, HANG_SHOULDER_COS, keep, h);
+                Ogre::Vector3 upper = (s.hangE - sh).normalisedCopy();
+                hangPoint(s.hangH, s.hangVH, s.hangE, l2, g, -rig.normal, upper, HANG_ELBOW_COS, keep, h);
+            }
+            if (diag::stage())
+                diag::count("arms_limp_swing_frame");
+        }
+        aimSegment(rig, rig.ru, rig.rf, (s.hangE - sh).normalisedCopy(), q, p);
+        aimSegment(rig, rig.rf, rig.rh, (s.hangH - s.hangE).normalisedCopy(), q, p);
     }
 
     Ogre::Animation* findAnimation(Ogre::Skeleton* sk, const char* name)
@@ -888,6 +972,12 @@ namespace
             s.clipYield = age;
             diag::count("l3_clip_yield_hit");
         }
+
+        if (s.clipYield < 0.0f && s.foreign)
+        {
+            s.clipYield = age;
+            diag::count("l3_clip_yield_foreign");
+        }
         float give = 1.0f;
         if (s.clipYield >= 0.0f)
         {
@@ -989,23 +1079,94 @@ namespace
         return true;
     }
 
+    const char* RUN_BASE_TRACK = "run lower";
+    const float RUN_MATCH_MIN = 0.985f;
+    float legMatch(const State& s, Ogre::OldNodeAnimationTrack* const tr[2], float t)
+    {
+        const Rig& rig = s.rig;
+        Ogre::TransformKeyFrame kf(NULL, 0.0f);
+        Ogre::TimeIndex ti(t);
+        float sum = 0.0f;
+        for (int k = 0; k < 2; ++k)
+        {
+            int h = rig.thigh[k];
+            tr[k]->getInterpolatedKeyFrame(ti, &kf);
+            sum += std::fabs((rig.bindQ[h] * kf.getRotation()).Dot(s.src[h]));
+        }
+        return sum * 0.5f;
+    }
+
+    bool legPhase(Ogre::Skeleton* sk, State& s, float& phase, float& baseLen)
+    {
+        const Rig& rig = s.rig;
+        if (rig.thigh[0] < 0 || rig.thigh[1] < 0 || rig.thigh[0] >= rig.n || rig.thigh[1] >= rig.n)
+            return false;
+        if (!s.runBaseTried)
+        {
+            s.runBaseTried = true;
+            s.runBase = findAnimation(sk, RUN_BASE_TRACK);
+        }
+        Ogre::Animation* base = s.runBase;
+        if (base == NULL || base->getLength() <= 0.0f)
+            return false;
+        Ogre::OldNodeAnimationTrack* tr[2] = { NULL, NULL };
+        const Ogre::Animation::OldNodeTrackList& tl = base->_getOldNodeTrackList();
+        for (Ogre::Animation::OldNodeTrackList::const_iterator it = tl.begin(); it != tl.end(); ++it)
+            for (int k = 0; k < 2; ++k)
+                if ((int)it->first == rig.thigh[k])
+                    tr[k] = it->second;
+        if (tr[0] == NULL || tr[1] == NULL)
+            return false;
+        float len = base->getLength();
+        const int N = 28;
+        float step = len / (float)N, best = -1.0f, bt = 0.0f;
+        for (int i = 0; i < N; ++i)
+        {
+            float m = legMatch(s, tr, step * (float)i);
+            if (m > best)
+            {
+                best = m;
+                bt = step * (float)i;
+            }
+        }
+        if (best < RUN_MATCH_MIN)
+            return false;
+        float lo = bt - step, hi = bt + step;
+        for (int i = 0; i < 6; ++i)
+        {
+            float a = lo + (hi - lo) / 3.0f, b = hi - (hi - lo) / 3.0f;
+            float ma = legMatch(s, tr, a - len * std::floor(a / len));
+            float mb = legMatch(s, tr, b - len * std::floor(b / len));
+            if (ma < mb)
+                lo = a;
+            else
+                hi = b;
+        }
+        float t = 0.5f * (lo + hi);
+        phase = t / len - std::floor(t / len);
+        baseLen = len;
+        return true;
+    }
+
     void applyRunClip(Ogre::Skeleton* sk, State& s, Mode mode, bool other)
     {
-        bool want = s.running && mode == MIRROR && !other && g_clipOn[arms::CLIP_RUN_TRAIL];
+        bool want = s.running && mode == MIRROR && !other && !s.foreign && g_clipOn[arms::CLIP_RUN_TRAIL];
         double now = defense::frameMs();
         float dt = (float)std::max(0.0, std::min(250.0, now - s.runLast)) / 1000.0f;
         s.runLast = now;
         if (want && s.runClip < 0)
         {
-            s.runClip = ((unsigned)(now / 7.0) & 1) ? arms::CLIP_RUN_LEAD : arms::CLIP_RUN_TRAIL;
+
+            s.runClip = arms::CLIP_RUN_TRAIL;
             s.runStart = now;
             s.runW = 0.0f;
             s.runCounted = false;
+            s.runPhaseCounted = false;
         }
         if (s.runClip < 0)
             return;
 
-        bool attack = mode == HOLD || mode == SWAP || mode == TWIN || mode == BLOCK;
+        bool attack = mode == HOLD || mode == SWAP || mode == TWIN || mode == BLOCK || s.foreign;
         if (attack && s.runW > 0.0f)
             diag::count("run_hold_overlaps_attack");
         s.runW += (want ? dt : -dt) / (attack ? CLIP_YIELD_S : RUN_FADE_S);
@@ -1027,7 +1188,25 @@ namespace
         float env = s.runW * s.runW * (3.0f - 2.0f * s.runW);
         const Rig& rig = s.rig;
         const Ogre::Animation::OldNodeTrackList& tl = a->_getOldNodeTrackList();
-        Ogre::TimeIndex ti(std::fmod((float)((now - s.runStart) / 1000.0), a->getLength()));
+
+        float phase = 0.0f, baseLen = a->getLength();
+        bool locked = false;
+        try { locked = legPhase(sk, s, phase, baseLen); }
+        catch (...) { locked = false; }
+        if (locked)
+            s.runPhase = phase;
+        else
+        {
+            s.runPhase += dt / baseLen;
+            s.runPhase -= std::floor(s.runPhase);
+        }
+        if (!s.runPhaseCounted || locked != s.runLocked)
+        {
+            s.runPhaseCounted = true;
+            s.runLocked = locked;
+            diag::count(locked ? "run_hold_phase_locked" : "run_hold_phase_free");
+        }
+        Ogre::TimeIndex ti(std::min(s.runPhase * baseLen, a->getLength() - 0.001f));
         Ogre::TransformKeyFrame kf(NULL, 0.0f);
         for (Ogre::Animation::OldNodeTrackList::const_iterator it = tl.begin(); it != tl.end(); ++it)
         {
@@ -1094,7 +1273,7 @@ namespace
     void applyStanceClip(Ogre::Skeleton* sk, State& s, Mode mode, bool other)
     {
         int byRank = g_clipOn[arms::CLIP_STANCE_DESHI] ? stanceForRank(s.rank) : -1;
-        bool want = s.inCombat && mode == MIRROR && !other && !s.running && byRank >= 0;
+        bool want = s.inCombat && mode == MIRROR && !other && !s.running && !s.foreign && byRank >= 0;
         double now = defense::frameMs();
         float dt = (float)std::max(0.0, std::min(250.0, now - s.stLast)) / 1000.0f;
         s.stLast = now;
@@ -1120,7 +1299,7 @@ namespace
             diag::count(CLIP_PLAYED[s.stCur]);
             diag::count("l3_stance_rank_changed");
         }
-        bool action = mode != MIRROR || other;
+        bool action = mode != MIRROR || other || s.foreign;
         s.stW += (want ? dt : -dt) / (action ? CLIP_YIELD_S : STANCE_FADE_S);
         if (s.stW <= 0.0f && !want)
         {
@@ -1161,7 +1340,7 @@ namespace
             for (int i = 0; i < rig.n; ++i)
                 s.tgt[i] = mirrorRot(rig, i, s.src);
             s.tgtP[rig.prop1] = mirrorPos(rig, rig.prop1, s.srcP);
-            hangRight(rig, s.tgt, s.tgtP);
+            hangRight(s, s.tgt, s.tgtP);
             return;
         }
         if (mode == SWAP)
@@ -1402,6 +1581,7 @@ namespace
         s.srcP.assign(n, Ogre::Vector3::ZERO);
         s.writtenP = s.tgtP = s.fromP = s.outP = s.guardP = s.srcP;
         s.lastT.QuadPart = 0;
+        s.hangT = -1.0;
         s.parryStart = -1.0;
         s.snapCount = s.snapNext = 0;
         s.parrySnap = -1;
@@ -1425,9 +1605,15 @@ namespace
         s.blendDur = g_blendSec;
         s.appliedAttack = -1;
         s.running = false;
+        s.foreign = false;
         s.runClip = -1;
         s.runStart = 0.0;
         s.runW = 0.0f;
+        s.runBase = NULL;
+        s.runBaseTried = false;
+        s.runPhase = 0.0f;
+        s.runLocked = false;
+        s.runPhaseCounted = false;
         s.runLast = 0.0;
         s.runCounted = false;
         s.moving = false;
@@ -1456,7 +1642,25 @@ namespace
         GetModuleFileNameA(self, path, MAX_PATH);
         std::string p(path);
         size_t slash = p.find_last_of("\\/");
-        return (slash == std::string::npos ? std::string(".") : p.substr(0, slash)) + "\\anim";
+        return (slash == std::string::npos ? std::string(".") : p.substr(0, slash)) + "\\character\\meshes";
+    }
+
+    void addL3Locations()
+    {
+        try
+        {
+            Ogre::ResourceGroupManager& rgm = Ogre::ResourceGroupManager::getSingleton();
+            for (int sex = 0; sex < 2; ++sex)
+            {
+                std::string dir = animDir() + L3_DIR[sex];
+                if (!rgm.resourceLocationExists(dir, Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME))
+                    rgm.addResourceLocation(dir, "FileSystem", Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
+            }
+        }
+        catch (...)
+        {
+            diag::count("l3_location_failed");
+        }
     }
 
     void loadL3Files()
@@ -1465,17 +1669,7 @@ namespace
         if (!located)
         {
             located = true;
-            try
-            {
-                Ogre::ResourceGroupManager& rgm = Ogre::ResourceGroupManager::getSingleton();
-                std::string dir = animDir();
-                if (!rgm.resourceLocationExists(dir, Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME))
-                    rgm.addResourceLocation(dir, "FileSystem", Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
-            }
-            catch (...)
-            {
-                diag::count("l3_location_failed");
-            }
+            addL3Locations();
         }
         for (int sex = 0; sex < 2; ++sex)
         {
@@ -1509,17 +1703,7 @@ namespace
         LeaveCriticalSection(&g_lock);
         if (!need)
             return;
-        try
-        {
-            Ogre::ResourceGroupManager& rgm = Ogre::ResourceGroupManager::getSingleton();
-            std::string dir = animDir();
-            if (!rgm.resourceLocationExists(dir, Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME))
-                rgm.addResourceLocation(dir, "FileSystem", Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
-        }
-        catch (...)
-        {
-            diag::count("l3_location_failed");
-        }
+        addL3Locations();
         for (int sex = 0; sex < 2; ++sex)
         {
             Ogre::SkeletonPtr sk;
@@ -1813,6 +1997,7 @@ namespace arms
     void setOffBlockStyle(int style) { g_offBlockStyle = style; }
 
     void setAngledSwap(bool on) { g_angledSwap = on; }
+    void setLimpSwing(bool on) { g_limpSwing = on; }
 
     void setAttackClip(Character* c, int k, float progress01)
     {
@@ -1889,6 +2074,7 @@ namespace arms
             if (in.inCombat && g_clipOn[CLIP_STANCE_DESHI])
                 loadL3Files();
             s.moving = in.moving;
+            s.foreign = in.foreign;
             s.rank = in.rank;
 
             if (k >= 0)
