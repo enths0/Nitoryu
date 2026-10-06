@@ -10,6 +10,7 @@
 #include <kenshi/combat/CombatTechniqueData.h>
 #include <kenshi/Animation/AnimationClass.h>
 #include <kenshi/CharMovement.h>
+#include <kenshi/AI/AITaskSystem.h>
 
 #include <OgreVector3.h>
 #include <OgreQuaternion.h>
@@ -35,6 +36,7 @@
 #include "Lefty.h"
 #include "Foreign.h"
 #include "Diagnostics.h"
+#include "Settings.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
 
@@ -629,6 +631,51 @@ namespace
         return !c->isDown() && !c->isUnconcious() && !c->isRagdoll() && !c->isBeingCarried();
     }
 
+    bool g_sheatheYields = true;
+
+    bool goalLeavesArmsFree(TaskType t)
+    {
+        switch (t)
+        {
+        case NULL_TASK: case IDLE: case UNEQUIP_WEAPON:
+        case MELEE_ATTACK: case FOCUSED_MELEE_ATTACK: case UNPROVOKED_FOCUSED_MELEE_ATTACK:
+        case CHOOSE_ENEMY_AND_ATTACK: case CHOOSE_ATTACKER_OF_ALLY: case ATTACK_CHARACTERS_ATTACKER:
+        case ATTACK_ATTACKERS_OF: case PROTECT_ALLIES: case ATTACK_ENEMIES: case PROTECTION:
+        case ATTACK_ENEMIES_AND_NEUTRALS: case SELF_PRESERVATION: case QUELL_AGGRESSION:
+        case ATTACK_TROUBLE_MAKERS: case ATTACK_ENEMIES_OF_MY_SLAVEMASTER: case BODYGUARD: case CHASE:
+        case GET_READY_FOR_ACTION: case MOVE_ON_FREE_WILL: case MOVE_CUS_ORDERED: case HOLD_POSITION:
+        case STAY_CLOSE_TO_TARGET: case GET_NEAR_TO: case FOLLOW_PLAYER_ORDER: case STAND_STILL:
+        case SQUAD_WAIT_FOR_ME:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    int reactingOf(Character* c, CombatClass* cc)
+    {
+        if (!cfg::b(cfg::YIELD_TO_REACTIONS))
+            return arms::REACT_NONE;
+        if (c->isDead() || c->isDown() || c->isUnconcious() || c->isRagdoll() || c->isBeingCarried()
+            || c->isCurrentlyGettingUp)
+            return arms::REACT_DOWN;
+        ProneState prone = c->getProneState();
+        if (prone == PS_KO || prone == PS_PLAYING_DEAD)
+            return arms::REACT_DOWN;
+        if (cc != NULL && cc->combatState == STUMBLE)
+            return arms::REACT_STAGGER;
+        return arms::REACT_NONE;
+    }
+
+    TaskType handsGoal(Character* c)
+    {
+        if (!g_sheatheYields)
+            return NULL_TASK;
+        OrdersReceiver* o = c->getOrdersReciever();
+        TaskType goal = o != NULL ? o->getCurrentGoal().key() : NULL_TASK;
+        return goalLeavesArmsFree(goal) ? NULL_TASK : goal;
+    }
+
     void sheatheDropMain(Character* c, AppearanceBase* app, Entry& e)
     {
         if (!e.sheatheMain)
@@ -697,6 +744,14 @@ namespace
             why = "sheathe_hold_skipped_down";
         else if (foreign::playing(e.fg))
             why = "sheathe_hold_skipped_foreign";
+        TaskType job = why == NULL ? handsGoal(c) : NULL_TASK;
+        if (job != NULL_TASK)
+        {
+            why = "sheathe_hold_skipped_job";
+            e.foughtAt = 0.0;
+            if (diag::takeDetail())
+                kit::Diag("sheathe_job").kv("who", nameOf(c)).kv("goal", (int)job).kv("at", "begin").emit();
+        }
         if (why != NULL)
         {
             diag::count(why);
@@ -754,6 +809,15 @@ namespace
             end = age >= d.lengthS - 0.15f ? "sheathe_hold_end" : "sheathe_hold_cut_clip";
         else if (age > d.lengthS + 0.4f || age < -0.5f)
             end = "sheathe_hold_timeout";
+        TaskType job = end == NULL ? handsGoal(c) : NULL_TASK;
+        if (job != NULL_TASK)
+        {
+
+            end = "sheathe_hold_cut_job";
+            arms::stopClip(c, k);
+            if (diag::takeDetail())
+                kit::Diag("sheathe_job").kv("who", nameOf(c)).kv("goal", (int)job).kv("at", "hold").kv("age", age).emit();
+        }
         if (end != NULL)
         {
             diag::count(end);
@@ -1135,8 +1199,22 @@ namespace
                 ent.dashDone = true;
             }
 
+            const int react = reactingOf(c, cc);
+            if (react == arms::REACT_DOWN)
+            {
+                if (ent.dashTech != NULL || dashTail >= 0.0f)
+                {
+                    diag::count("attack_tail_cut_down");
+                    ent.dashTech = NULL;
+                    ent.dashDone = dashNow;
+                    dashTail = -1.0f;
+                }
+                m = arms::MIRROR;
+            }
+
             arms::FrameInput fin;
             fin.mode = m;
+            fin.reacting = react;
             fin.inCombat = cc != NULL && cc->_isInCombatMode();
 
             double fgNow = defense::clockMs();
@@ -1245,6 +1323,8 @@ namespace
             fin.parryStart = parry >= 0.0 && fin.nowMs - parry < 1000.0 ? parry : -1.0;
             double blocked = defense::lastMainBlockMs(c);
             fin.blockHitStart = blocked >= 0.0 && fin.nowMs - blocked < 1000.0 ? blocked : -1.0;
+            fin.parryBack = fin.parryStart >= 0.0 && defense::lastParryBack(c);
+            fin.blockHitBack = fin.blockHitStart >= 0.0 && defense::lastMainBlockBack(c);
             arms::setFrame(c, fin);
         }
         for (std::map<Character*, LeftyEntry>::iterator it = g_lefties.begin(); it != g_lefties.end(); ++it)
@@ -1268,6 +1348,7 @@ namespace
             }
             CombatClass* cc = c->getCombatClass();
             arms::setMode(c, arms::LEFTY, cc != NULL && cc->_isInCombatMode());
+            arms::setReacting(c, reactingOf(c, cc));
         }
         arms::emitClipLog();
     }
@@ -1333,6 +1414,9 @@ namespace
     bool animSwitch(const std::string& path, const char* key, const char* legacy)
     {
         int v = GetPrivateProfileIntA("Animations", key, -1, path.c_str());
+
+        if (v < 0 && strcmp(key, "x_cut") == 0)
+            v = GetPrivateProfileIntA("Animations", "cross_finisher", -1, path.c_str());
         if (v < 0)
             v = GetPrivateProfileIntA("Test", legacy, 1, path.c_str());
         return v != 0;
@@ -1387,6 +1471,7 @@ namespace visual
         arms::setLimpSwing(GetPrivateProfileIntA("Animations", "limp_arm_swing", 1, path.c_str()) != 0);
 
         g_sheatheMain = GetPrivateProfileIntA("Animations", "dual_sheathe_main_blade", 1, path.c_str()) != 0;
+        g_sheatheYields = GetPrivateProfileIntA("Animations", "sheathe_yields_to_jobs", 1, path.c_str()) != 0;
 
         combat::setDashOn(GetPrivateProfileIntA("Moves", "dash_slash", 1, path.c_str()) != 0);
     }

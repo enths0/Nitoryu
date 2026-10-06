@@ -64,10 +64,16 @@ namespace arms
         float attackProgress;
         double parryStart;
         double blockHitStart;
+        bool parryBack;
+        bool blockHitBack;
         int blockDir;
         double nowMs;
+        int reacting;
     };
     void setFrame(Character* c, const FrameInput& in);
+
+    enum Reacting { REACT_NONE = 0, REACT_STAGGER = 1, REACT_DOWN = 2 };
+    void setReacting(Character* c, int level);
     void emitClipLog();
 
     void takeCost(double& totalMs, double& maxMs, unsigned& calls, int& peak);

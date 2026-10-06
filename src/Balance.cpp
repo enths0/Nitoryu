@@ -5,19 +5,14 @@
 #include <string>
 
 #include "Balance.h"
+#include "core/Math.h"
 #include "Settings.h"
 #include "Tuning.h"
 
 namespace
 {
 
-    const int MAX_ANCHORS = 16;
-
-    struct Curve
-    {
-        tuning::Anchor a[MAX_ANCHORS];
-        int n;
-    };
+    typedef core::Curve Curve;
 
     Curve g_curve[balance::CURVE_COUNT];
     float g_guard[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
@@ -32,39 +27,7 @@ namespace
                                               "counter_chance", "pressure_points", "tempo", "mugen_cooldown_ms",
                                               "mugen_chain", "scissor_chance", "split_chance" };
 
-    bool parse(const char* s, Curve& c)
-    {
-        Curve out;
-        out.n = 0;
-        const char* p = s;
-        while (*p)
-        {
-            while (*p == ' ' || *p == ',')
-                ++p;
-            if (!*p)
-                break;
-            char* end = NULL;
-            double dp = strtod(p, &end);
-            if (end == p || *end != ':')
-                return false;
-            p = end + 1;
-            double v = strtod(p, &end);
-            if (end == p)
-                return false;
-            p = end;
-            tuning::Anchor a = { (float)dp, (float)v };
-            if (out.n >= MAX_ANCHORS || (out.n > 0 && a.dp <= out.a[out.n - 1].dp))
-                return false;
-            out.a[out.n++] = a;
-        }
-        if (out.n == 0)
-            return false;
-
-        for (int i = 0; i < out.n; ++i)
-            c.a[i] = out.a[i];
-        c.n = out.n;
-        return true;
-    }
+    bool parse(const char* s, Curve& c) { return core::parseCurve(s, c); }
 
     void note(const char* key, cfg::Id id, bool ok)
     {
@@ -109,19 +72,7 @@ namespace balance
         note("divided_guard", cfg::DIVIDED_GUARD, six);
     }
 
-    float at(CurveId id, float dp)
-    {
-        const Curve& c = g_curve[id];
-        int n = c.n;
-        if (n <= 0)
-            return 0.0f;
-        if (dp <= c.a[0].dp)
-            return c.a[0].v;
-        for (int i = 1; i < n; ++i)
-            if (dp <= c.a[i].dp)
-                return c.a[i - 1].v + (c.a[i].v - c.a[i - 1].v) * (dp - c.a[i - 1].dp) / (c.a[i].dp - c.a[i - 1].dp);
-        return c.a[n - 1].v;
-    }
+    float at(CurveId id, float dp) { return core::curveAt(g_curve[id], dp); }
 
     float dividedGuard(int tier) { return g_guard[tier < 0 ? 0 : tier > 5 ? 5 : tier]; }
 

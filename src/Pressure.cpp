@@ -21,6 +21,7 @@
 #include "Balance.h"
 #include "Diagnostics.h"
 #include "kit/diag.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -100,6 +101,7 @@ namespace
     swordStateEnum (*who_orig)(CombatClassAI*, Character*, float, float&) = NULL;
     swordStateEnum who_hook(CombatClassAI* self, Character* who, float opp, float& ret)
     {
+        diag::HookCall hc(diag::HK_WHO_ATTACKS);
         if (!g_enabled || !(g_on || g_tempoOn) || self == NULL || self->me == NULL || who == NULL || who == self->me)
             return who_orig(self, who, opp, ret);
         double now = defense::clockMs();
@@ -114,6 +116,7 @@ namespace
         }
         if (lead == 0.0f)
             return who_orig(self, who, opp, ret);
+        hc.ours();
         float shifted = opp + lead;
         swordStateEnum r = who_orig(self, who, shifted, ret);
 
@@ -161,7 +164,7 @@ namespace pressure
 
     bool installHooks()
     {
-        bool ok = hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CombatClassAI::_NV_whoAttacksYouOrMe), who_hook, &who_orig),
+        bool ok = hook(hooks::add("CombatClassAI::whoAttacksYouOrMe", "pressure", KenshiLib::GetRealAddress(&CombatClassAI::_NV_whoAttacksYouOrMe), who_hook, &who_orig),
                        "CombatClassAI::whoAttacksYouOrMe");
         char b[160];
         sprintf_s(b, "pressure:%s, max %d stacks, decay %d ms, points %.2f (-1 = by DP)",

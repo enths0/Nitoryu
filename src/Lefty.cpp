@@ -23,6 +23,7 @@
 #include "Diagnostics.h"
 #include "kit/diag.h"
 #include "kit/rtti.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -139,12 +140,14 @@ namespace
     void (*choose_orig)(void*, Character*) = NULL;
     void choose_hook(void* task, Character* c)
     {
+        diag::HookCall hc(diag::HK_MELEE_TASK);
         float a = 0.0f;
         if (c == NULL || !cachedA(c, a))
         {
             choose_orig(task, c);
             return;
         }
+        hc.ours();
         {
             ArmOverride arm(&c->medical.rightArmOk);
             choose_orig(task, c);
@@ -204,7 +207,7 @@ namespace lefty
             return false;
         }
 
-        if (KenshiLib::AddHook(target, reinterpret_cast<void*>(choose_hook), reinterpret_cast<void**>(&choose_orig))
+        if (hooks::add("Task_MeleeAttack (vtable slot 5)", "lefty", target, reinterpret_cast<void*>(choose_hook), reinterpret_cast<void**>(&choose_orig))
             != KenshiLib::SUCCESS)
         {
             kit::log::error("Nitoryu: could not hook the melee task's weapon choice; no left-hand fighting");

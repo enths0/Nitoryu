@@ -19,7 +19,7 @@ the mod is playable, but the work goes on: more moves, more animations, and I'll
 ## Install
 
 1. Subscribe on the Steam Workshop (or put the `Nitoryu` folder into `Kenshi\mods\`).
-2. Enable **Nitoryu** and put it at the very end of your load order, after all your main mods.
+2. Enable **Nitoryu** and put it at the very end of your load order, after all your main mods. If `RE_Kenshi_log.txt` says another plugin hooks something on top of Nitoryu, move Nitoryu below that mod: some plugins (KEP's melee XP fix, for one) replace a game function without passing it on, and then Dual Wielding stops growing.
 3. Start the game through RE_Kenshi as usual.
 
 to remove it, just disable it. saves stay loadable, characters only lose their Dual Wielding number (it comes back if you enable the mod again). if you still have a test build of Nitoryu in `Kenshi\mods\`, delete that folder: only one copy runs.
@@ -41,10 +41,10 @@ to remove it, just disable it. saves stay loadable, characters only lose their D
 - It levels like every other skill, just by fighting, but only with two blades or left-handed: half of the weapon XP of each such hit also goes into it. It grows faster while it is below your weapon skill and slower once it is above.
 - A new character starts at a quarter of its best katana or sabre skill.
 - The first levels can be trained on the **Pair Training Dummy** (below).
-- Heavy armour and overload lower it in a fight, since the idea of dual wielding is an agile fighter. The minus shows in red next to the skill, and the hover says why and how much.
+- Armour and overload lower it in a fight, since the idea of dual wielding is an agile fighter: each heavy piece you wear takes 7%, each medium piece 4% (light armour and clothes nothing). The minus shows in red next to the skill, and the hover says why and how much.
 - It is saved with your game.
 
-**The Path** is your overall skill with two blades, a number from 0 to 100 built from five things: the lower of your two weapon skills (30%), Dual Wielding (30%), Dexterity (20%), melee attack (10%) and melee defence (10%). All of them at X give Path X. The stats count as they are in the fight, so wounds, armour and overload pull the Path down, and a rank can drop in the middle of a fight.
+**The Path** is your overall skill with two blades, a number from 0 to 100 built from five things: Dual Wielding (60%), the lower of your two weapon skills (10%), Dexterity (10%), melee attack (10%) and melee defence (10%). All of them at X give Path X. The stats count as they are in the fight, so wounds, armour and overload pull the Path down, and a rank can drop in the middle of a fight.
 
 ## The ranks
 
@@ -54,7 +54,7 @@ the Path opens five ranks. ranks 3-5 also need Dual Wielding itself.
 |---|---|---|---|
 | 1 Deshi | 20 | - | The second blade starts striking on its own: the off-hand cut and the off-hand rising cut |
 | 2 Bushi | 40 | - | The second blade parries hits the main one missed. The off-hand downward cut |
-| 3 Ronin | 60 | 40 | Twin strikes, ripostes after a block, pressure, both blades into the same body part, the special moves (Cross finisher, Dash slash), other mods' long moves with both blades |
+| 3 Ronin | 60 | 40 | Twin strikes, ripostes after a block, pressure, both blades into the same body part, the back guard, the special moves (X cut, Dash slash), other mods' long moves with both blades |
 | 4 Kenshi | 75 | 60 | Flow, the Spin, two enemies at once |
 | 5 Kensei | 90 | 80 | Mugen: moves with both blades come back much sooner, and a twin strike that lands can chain the next one |
 
@@ -71,27 +71,29 @@ every rank also has its own combat stance (see the animations). below rank 1 a f
 - **Second-blade parry.** The second blade parries a hit the main blade missed: a hit from a second enemy (the full chance), or a later hit of one enemy's combo (half of it).
 - The chance: 20% at Path 40, 30% at 60, 40% at 75, 50% at 90, 55% at 100.
 - Only from the front and the flanks (110 degrees to each side), never while your fighter swings, staggers or is down, at most once per game second.
-- A new strike: the **off-hand downward cut**.
+- From Ronin (rank 3) the second blade also tries a blow from behind, at half the chance: the back guard.
+- New strikes: the **off-hand downward cut**, and six with my own animations: the **beat and cut**, the **double chop**, the **leg cut**, the **dual cut** and a **chest cut** for each hand.
 
 ### Rank 3, Ronin (Path 60, Dual Wielding 40)
 
-- **Twin strikes.** Both blades in one swing, two wounds at once: the twin overhead cut, the cross slash and the **twin sweep** (my own animation). 25% of second-blade attacks at Path 60, 45% at 100. A new second-blade strike too, the off-hand combo.
+- **Twin strikes.** Both blades in one swing, two wounds at once: the twin overhead cut, the cross slash and the **twin sweep** (my own animation). 25% of second-blade attacks at Path 60, 45% at 100. Three more twin strikes with my own animations: the **one-two**, the **fan sweep** and the **figure eight**. A new second-blade strike too, the off-hand combo.
 - **Ripostes.** After you block, your next attack within 1.5 s can be a riposte with the second blade or both: 30% at Path 60, 60% at 100.
 - **The parry in a duel.** The second blade now also parries the first hit of the enemy you're facing, at half the chance.
 - **Pressure.** Every hit of yours an enemy blocks puts a stack of pressure on them (up to 5, one fades every 3 s). Each stack counts against them when the game decides who swings next, so they block more and attack less. A hit they land on you clears it.
 - **The same body part.** When both blades of a twin strike land on one enemy, the second goes for the body part the first one hit: 80% at Path 60, always from 75. Limbs come off faster.
 - **Special moves** (they also need Dual Wielding 50):
-  - **Cross finisher:** the right blade down, then the left, an X. It comes on a staggering enemy, on an enemy under full pressure (5 stacks), or within 1.5 s after your block or parry. At most once per 3 s.
+  - **X cut** (was the Cross finisher): the right blade down, then the left, an X. It comes on a staggering enemy, on an enemy under full pressure (5 stacks), or, one time in four, within 1.5 s after your block or parry. At most once per 3 s.
   - **Dash slash:** a sprint from up to 35 units away, the blades cross in an X and split out on the hit. At most once per 12 s per fighter.
 - **Other mods' long moves** (like issen from More Combat Animations) are played with both blades, and the second blade hits too. They share the Dash's 12 s cooldown.
-- Moves that hit with both blades (twin strikes, the Cross, the Dash) share a **5 s cooldown**, so double hits don't come back to back; the second blade strikes alone meanwhile. It also doesn't use the same move twice in a row.
+- Moves that hit with both blades (twin strikes, the X cut, the Dash) share a **5 s cooldown**, so double hits don't come back to back; the second blade strikes alone meanwhile. It also doesn't use the same move twice in a row.
 - The beginner's split guard is gone from this rank.
 
 ### Rank 4, Kenshi (Path 75, Dual Wielding 60)
 
 - **Flow.** After 3 enemy attacks aimed at your fighter within 5 s (blocked, parried or landed, all count) it concentrates for 4 s: Dexterity counts another +12% in the cut damage, the attack speed is x1.04 and its cap goes from 1.5 to 1.8. Then 5 s before attacks count again. A knockdown ends it.
+- Two more twin strikes: the **head wrap** and the **three cuts**.
 - **The Spin.** A rush, a sweep with both blades, a side step, a turn rising into an X over the head and a cross-split: both blades hit on the sweep and on the split, 4 hits in one move. From a distance (6-25 units beyond reach), at most once per 20 s. While the Spin is ready it goes before the Dash.
-- **Two enemies, two blades.** When a second enemy who attacked you in the last 8 s stands at your flank, the left blade of a twin strike or of the Cross lands on him, and the right one stays on your target.
+- **Two enemies, two blades.** When a second enemy who attacked you in the last 8 s stands at your flank, the left blade of a twin strike or of the X cut lands on him, and the right one stays on your target.
 
 ### Rank 5, Kensei (Path 90, Dual Wielding 80)
 
@@ -106,7 +108,7 @@ below rank 3 two blades are worse than one. it all goes away as the Path grows:
 - **Split guard:** your block is weaker at ranks 0-1, half as much at rank 2, not at all from rank 3.
 - **Speed:** attack and block speed x0.85 at Path 0, normal from Path 30.
 - **Strength:** a pair counts as 1.25 x both weapons' weight, so two equal blades need 2.5x the strength of one.
-- **Heavy armour and overload** lower Dual Wielding in a fight, and with it the Path and the rank.
+- **Armour and overload** lower Dual Wielding in a fight (heavy -7% a piece, medium -4%), and with it the Path and the rank.
 
 ## What you pair
 
@@ -132,7 +134,7 @@ Nitoryu doesn't replace the game's speed formula. the game computes attack and b
 
 hover **Dual Wielding** in the stats window:
 
-- "In a fight now": the Dual Wielding that counts right now, with "-Overloaded" and "-Heavy armour" and their factors when they apply.
+- "In a fight now": the Dual Wielding that counts right now, with "-Overloaded" and "-Armour" and their factors when they apply.
 - "Path: Ronin (62)": your rank and Path, and what the next rank still needs, e.g. "40 Dual Wielding for Ronin".
 - "Ranks": all five with what each opens. The ones you have are coloured like the game's item grades (a recolour mod changes them too), the rest are grey with what they need.
 - "Dual speed bonus: x1.04": Nitoryu's own multiplier on attack and block speed.
@@ -166,7 +168,7 @@ in vanilla a character with a crippled right arm drops to martial arts. with Dua
 
 - The left arm mirrors the right frame by frame (guard, walking, running, strikes), so the dual stance takes on the style of your animation mods.
 - Another mod's long move (attack distance 20+) is played with both blades by a fighter with the special moves. A fighter without them never plays a long move that needs both hands on one hilt, the game picks another.
-- My own animations play over the game's tracks and give way at once to a swing, a block or a hit.
+- My own animations play over the game's tracks and give way at once to a swing, a block or a hit. When a fighter is staggered, knocked down, knocked out or getting up, they step aside and the game's own animation plays (`[Animations] yield_to_reactions=0` brings the old way back).
 
 ## My animations
 
@@ -174,16 +176,17 @@ all made for two blades, each can be turned off in `[Animations]` (then the mirr
 
 1. **Dual draw:** both blades over the shoulders in one motion, or the second one from the hip if it's worn there. `dual_draw`.
 2. **Dual sheathe:** a flick, the right blade home first, then the left (to the back or the hip). Only the look takes a moment, the game sheathes at once, so first aid and carrying start as in vanilla. `dual_sheathe`.
-3. **Blood flick:** a fighter who sheathes right after a won fight (its enemy is dead, down or knocked out) first flicks both blades down and out, pauses, then sheathes. `dual_chiburi`.
+3. **Blood flick:** a fighter who sheathes right after a won fight (its enemy is dead, down or knocked out) first flicks both blades down and out, pauses, then sheathes. `dual_chiburi`. Neither the flick nor the sheathe plays when the fighter goes straight on to first aid, a splint, looting or lifting someone: the blades just go home (`sheathe_yields_to_jobs=0` brings the old way back).
 4. **A stance per rank:** in a fight, when the fighter isn't attacking, blocking or running, it holds the stance of its rank, no switching: Deshi hides behind the swords, Bushi holds a drilled guard, Ronin the upper guard, Kenshi keeps one blade hidden, Kensei rests a blade on the shoulder. Below rank 1 it's the game's guard. Walking up to the enemy keeps the stance's arms. `idle_stances`.
-5. **Running with the blades:** both trailing behind, the body leaning into the run. `run_hold`.
+5. **Running with the blades:** both trailing behind, the body leaning into the run. `run_hold`. It keeps in step with the legs; with another mod's run it can't follow, the upper body only half-follows it (`run_hold_free_weight`, 0 to 1, default 0.5).
 6. **Main-hand blocks by direction:** the guard follows the blow. From the left or the right both blades together, leaning to that side (**angled block**), from above the right blade flat over the head (**overhead block**), from the front the **scissor X** or a one-blade block (the right blade high over the head, the left one low), at random. `angled_block`, `main_block`, `scissor_block`, `main_block_single`.
 7. **A hit taken on the block:** when a blow lands on the blades, the guard gets pushed back once and comes back. `dual_block` for the X.
-8. **Guard broken:** when a blow gets through a block, the blades get knocked apart, the body takes it and steps back. `guard_broken`.
-9. **A hit that gets through:** if a blow lands while the fighter wasn't blocking, it rocks back once and keeps both blades. `hit_taken`.
-10. **Second-blade parry:** a block with the left blade alone, the free blade low behind or held forward (`offhand_block_style`: mix, low, forward). `offhand_block`; with it off, the left blade is lifted over the head (`high_block`).
-11. **Off-hand rising cut**, **twin sweep**, **one-two**, **off-hand backhand**, **beat and cut** and **double chop:** the six strikes with their own animations. `off_rising_cut`, `twin_sweep`, `one_two`, `off_backhand`, `beat_cut`, `double_chop` (0 = the move is not used).
-12. **Cross finisher**, **Dash slash** and **Spin:** whole-body animations for the three specials. `cross_finisher`, `dash_slash`, `spin`.
+8. **A hit that gets through:** if a blow lands while the fighter wasn't blocking, it rocks back once and keeps both blades. `hit_taken`.
+9. **Second-blade parry:** a block with the left blade alone, the free blade low behind or held forward (`offhand_block_style`: mix, low, forward). `offhand_block`; with it off, the left blade is lifted over the head (`high_block`).
+10. **Off-hand rising cut**, **twin sweep**, **one-two**, **off-hand backhand**, **beat and cut**, **double chop**, **leg cut**, **dual cut**, **off-hand chest cut** and **main-hand chest cut:** the ten strikes with their own animations. `off_rising_cut`, `twin_sweep`, `one_two`, `off_backhand`, `beat_cut`, `double_chop`, `off_leg_cut`, `dual_cut`, `off_hand_cut`, `main_hand_cut` (0 = the move is not used).
+11. **Fan sweep**, **figure eight** (Ronin), **head wrap** and **three cuts** (Kenshi): four twin strikes for the higher ranks. the fan sweep rises from the hip with both blades, the figure eight wheels each blade round into its own diagonal without a stop, the head wrap swings the right blade round behind the head and finishes in a long lunge, the three cuts are three small quick ones walking in. `fan_sweep`, `figure_eight`, `head_wrap`, `three_cuts`.
+12. **X cut** (was the Cross finisher), **Dash slash** and **Spin:** whole-body animations for the three specials. `x_cut` (an old `cross_finisher=` still works), `dash_slash`, `spin`.
+13. **Back guard** (Ronin and up): a blow from behind caught without turning round, the blade laid across the back, low behind the hip or high over the shoulder. the second blade does it when it parries an attacker behind you, the main blade when it blocked one. `back_guard`.
 
 if the angled block leans away from the blow in your game, set `[Animations] angled_block_swap=1`.
 
@@ -192,13 +195,13 @@ if the angled block leans away from the blow in your game, set `[Animations] ang
 a lot of you asked for levers in FCS, so most of Nitoryu is data. no C++ needed for any of this, just a mod loaded after Nitoryu.
 
 1. **Balance.** About 100 settings sit on GLOBAL CONSTANTS as `nitoryu ...` fields: the Path weights, ranks, every curve, penalties, speed, parries, pressure, flow, Mugen, pair bonuses, NPC rules. Change a field in your mod and it applies to everyone who runs it. A player's own `Nitoryu.ini` still wins if they set the same thing there.
-2. **Moves.** A dual-wield move is a COMBAT_TECHNIQUE record with a few `nitoryu` fields: what it is (off-hand strike, twin strike, finisher, a move from distance), cooldown, distance, which of my clips goes over it. My twelve moves are made exactly this way, so copy one and change it.
+2. **Moves.** A dual-wield move is a COMBAT_TECHNIQUE record with a few `nitoryu` fields: what it is (off-hand strike, twin strike, finisher, a move from distance), cooldown, distance, which of my clips goes over it. My own moves are made exactly this way, so copy one and change it.
 3. **Weapons.** `nitoryu dual wield` on a WEAPON lets it into a pair or keeps it out, whatever its category. `nitoryu off hand damage` changes its damage as the second blade, `nitoryu pair length` sets its role in a pair (long or short).
 4. **NPCs.** Tick `nitoryu dual wielder` on your CHARACTER or FACTION and they fight with two blades when they carry a pair, with no stat minimums and no rank cap, even when the player has `[NPC] dual=authored`. The older ways still work: add them to the squad "Nitoryu dual wielders (opt-in list)" (it never spawns), or `[NPC] opt_in=<string id>,<string id>` in the ini. To set their Dual Wielding skill (the number in the stats window) in plain FCS, add the character or the faction to one of the squads "Nitoryu dual wielders (Dual Wielding 40 / 60 / 80 / 100)", or type an exact number as the character's first value there, so a dual-wield master doesn't need pumped stats. The field `nitoryu dual wielding` and `[NPC] skill=<string id>:<value>` in the ini do the same. For an NPC that has to be a master whatever its stats, set its lowest Path too: the second value of the character in those squads, the field `nitoryu path`, or `[NPC] path=<string id>:<value>`.
 5. **Races.** `nitoryu rig` on a RACE, if my mirroring looks wrong on your skeleton: 1 puts the second blade in a fixed left-hand grip, 2 turns Nitoryu off for that race.
 6. **Training.** `nitoryu pair dummy` on a training BUILDING makes it train Dual Wielding up to its `output rate`.
 
-to see the fields with tooltips in FCS you need FCS Extended (it loads `fcs.def` from the mod folder, the same way Second Life of Kenshi's own fields show up). players don't need it. the manual is `FCS.md` next to this file (how to add a move, every field, my twelve records, how to set your NPCs' Dual Wielding in plain FCS; in Russian: `FCS_RU.md`), the settings table is `FCS-settings.md`, and every field with its description is in `fcs.def`; in the game data the skill is still called Ambidexterity and the Path "DP".
+to see the fields with tooltips in FCS you need FCS Extended (it loads `fcs.def` from the mod folder, the same way Second Life of Kenshi's own fields show up). players don't need it. the manual is `FCS.md` next to this file (how to add a move, every field, my own records, how to set your NPCs' Dual Wielding in plain FCS; in Russian: `FCS_RU.md`), the settings table is `FCS-settings.md`, and every field with its description is in `fcs.def`; in the game data the skill is still called Ambidexterity and the Path "DP".
 
 one thing isn't there yet: a track that animates both arms itself and plays as authored. for now a move is a right-hand track that I mirror or put on both blades.
 
@@ -209,13 +212,13 @@ one thing isn't there yet: a track that animates both arms itself and plays as a
 - `[General] language`: `auto`, `en`, `ru`, `zh`, `ja`, ... (the Chinese texts are by 7 from the Workshop discussions, thanks! Japanese is a machine translation, corrections welcome)
 - `[General] diag`: how much goes into `RE_Kenshi_log.txt`: `off`, `normal` (default), `stage`, `verbose`.
 - `[UI] toggle_button`, `any_weapon_button`, `button_tips`, `button_size`, `hotkey`.
-- `[Stats] rank_colours`, `rank_up_message`, `group` (where the Dual Wielding line sits: 1 Weapons / 2 Combat).
+- `[Stats] rank_colours`, `rank_up_message`, `rank_in_title` (the rank in the stats window's title, off by default), `panel_pair_bonus` (the character panel's Attack and Defense count the second blade while the pair is drawn), `group` (where the Dual Wielding line sits: 1 Weapons / 2 Combat).
 - `[Marks] marks` (0 / 1 selected / 2 mine / 3 everyone), `place` (2 heads / 1 portraits / 3 both), `flow`, `mugen`, `pressure`, `tips`, `size`, `height`.
 - `[Animations]`: each of my animations on or off.
 - `[NPC] dual` (`all` / `authored` / `off`), `max_tier`, `opt_in` and `skill`.
 - `[Weapons] categories`: what can pair.
-- `[Guard] cooldown_ms` (one parry per game second) and `arc_deg` (110 = front and flanks).
-- `[Moves] dash_cooldown_ms` (12000), `spin_cooldown_ms` (20000), `double_hit_cooldown_ms` (5000), `no_repeat`.
+- `[Guard] cooldown_ms` (one parry per game second), `arc_deg` (110 = front and flanks), `back_min_tier` (3: the rank that guards the back, 6 = never) and `back_share` (0.5 of the parry chance there).
+- `[Moves] dash_cooldown_ms` (12000), `spin_cooldown_ms` (20000), `double_hit_cooldown_ms` (5000), `no_repeat`, `even_picks` (1: of the moves that come up, the second blade takes the one it used least), `cross_riposte_chance` (0.25: how often the X cut answers a block).
 - `[Speed] dual_speed_bonus`, `dual_attack_cap`.
 - `[Flow]`, `[Mugen]`, `[Pair]`, `[Scissor]` (the same body part), `[Split]` (two enemies), `[Training]`, `[LeftHand]`: each mechanic's switch and numbers.
 - `[Balance]`: every curve by the Path.

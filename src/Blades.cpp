@@ -26,6 +26,7 @@
 #include "Settings.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -107,6 +108,7 @@ namespace
     GameData* addWound_hook(MedicalSystem* self, bool lowBlow, CutDirection area, Damages& damage, int& material,
                             RootObject* attacker, AttackDirection::Enum& attackDirection, Harpoon* harpoon)
     {
+        diag::HookCall hc(diag::HK_ADD_WOUND);
         GameData* part = addWound_orig(self, lowBlow, area, damage, material, attacker, attackDirection, harpoon);
         t_woundPart = part;
         return part;
@@ -147,7 +149,7 @@ namespace blades
 
     bool installHooks()
     {
-        g_woundHook = KenshiLib::AddHook(KenshiLib::GetRealAddress(&MedicalSystem::addWound), addWound_hook,
+        g_woundHook = hooks::add("MedicalSystem::addWound", "scissor", KenshiLib::GetRealAddress(&MedicalSystem::addWound), addWound_hook,
                                          &addWound_orig) == KenshiLib::SUCCESS;
         if (!g_woundHook)
             kit::log::error("Nitoryu: could not hook MedicalSystem::addWound");

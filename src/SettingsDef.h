@@ -1,15 +1,15 @@
 #pragma once
 
 #define NITORYU_SETTINGS(X) \
-    X(W_SKILL, F, "0.30", "nitoryu dp weight skill", "Nitoryu 01 dual proficiency", "", "", \
+    X(W_SKILL, F, "0.10", "nitoryu dp weight skill", "Nitoryu 01 dual proficiency", "", "", \
       "Dual proficiency (DP, 0-100) is a weighted average of five inputs, each capped at 100. This is the weight of the lower of the two weapon skills. The five weights should sum to 1.") \
-    X(W_DEX, F, "0.20", "nitoryu dp weight dexterity", "Nitoryu 01 dual proficiency", "", "", \
+    X(W_DEX, F, "0.10", "nitoryu dp weight dexterity", "Nitoryu 01 dual proficiency", "", "", \
       "Weight of Dexterity in dual proficiency.") \
     X(W_ATTACK, F, "0.10", "nitoryu dp weight attack", "Nitoryu 01 dual proficiency", "", "", \
       "Weight of Melee Attack in dual proficiency.") \
     X(W_DEFENCE, F, "0.10", "nitoryu dp weight defence", "Nitoryu 01 dual proficiency", "", "", \
       "Weight of Melee Defence in dual proficiency.") \
-    X(W_AMBI, F, "0.30", "nitoryu dp weight ambidexterity", "Nitoryu 01 dual proficiency", "", "", \
+    X(W_AMBI, F, "0.60", "nitoryu dp weight ambidexterity", "Nitoryu 01 dual proficiency", "", "", \
       "Weight of effective Ambidexterity (after overload and armour) in dual proficiency.") \
     X(TIER_DP, L, "20,40,60,75,90", "nitoryu tier dp", "Nitoryu 01 dual proficiency", "", "", \
       "Five numbers: the DP a fighter needs for tiers T1..T5. Moves and mechanics unlock per tier.") \
@@ -47,10 +47,12 @@
       "Clumsiness points regained per point of DP.") \
     X(OVERLOAD_FLOOR, F, "0.2", "nitoryu overload floor", "Nitoryu 03 penalties", "", "", \
       "Carrying over capacity lowers effective Ambidexterity; it never falls below this factor.") \
-    X(ARMOUR_PENALTY, F, "2.0", "nitoryu armour penalty", "Nitoryu 03 penalties", "", "", \
-      "Heavy armour: effective Ambidexterity loses this x the shortfall of the combat speed multiplier below 1.") \
+    X(ARMOUR_HEAVY_CUT, F, "0.07", "nitoryu armour heavy cut", "Nitoryu 03 penalties", "", "", \
+      "Each worn armour piece of class heavy lowers effective Ambidexterity by this share (0.07 = 7 percent); the pieces add up. The field nitoryu dual wielding cut on an ARMOUR record overrides it for that piece.") \
+    X(ARMOUR_MEDIUM_CUT, F, "0.04", "nitoryu armour medium cut", "Nitoryu 03 penalties", "", "", \
+      "Each worn armour piece of class medium lowers effective Ambidexterity by this share. Light armour and clothing cut nothing unless their record sets nitoryu dual wielding cut.") \
     X(ARMOUR_FLOOR, F, "0.3", "nitoryu armour floor", "Nitoryu 03 penalties", "", "", \
-      "The armour factor on Ambidexterity never falls below this.") \
+      "The armour factor on Ambidexterity (1 minus the worn pieces' cuts) never falls below this.") \
     X(OFF_WEAPON_BONUS_SHARE, F, "0.5", "nitoryu off weapon bonus share", "Nitoryu 03 penalties", "", "", \
       "The second weapon adds this share of its own attack, defence and indoor bonuses.") \
     \
@@ -81,6 +83,10 @@
       "Share of the guard chance against the first hit of the enemy the main blade faces.") \
     X(MAIN_GUARD_MIN_TIER, I, "3", "nitoryu guard main min tier", "Nitoryu 05 guard and counter", "", "", \
       "Tier from which the second blade also parries the first hit of the enemy the main blade faces.") \
+    X(BACK_GUARD_MIN_TIER, I, "3", "nitoryu back guard min tier", "Nitoryu 05 guard and counter", "Guard", "back_min_tier", \
+      "Tier from which a blade guards the back: the second blade may parry an attacker outside the guard arc, and a hit from behind that the main blade blocked shows the back guard. 6 = never.") \
+    X(BACK_GUARD_SHARE, F, "0.5", "nitoryu back guard share", "Nitoryu 05 guard and counter", "Guard", "back_share", \
+      "Share of the guard chance against an attacker behind the fighter (outside the guard arc).") \
     X(COUNTER_ON, B, "1", "nitoryu counter", "Nitoryu 05 guard and counter", "Guard", "counter", \
       "The first attack after a successful block may be an off-hand riposte.") \
     X(COUNTER_MIN_TIER, I, "3", "nitoryu counter min tier", "Nitoryu 05 guard and counter", "", "", \
@@ -111,6 +117,10 @@
       "After a move that hits with both blades the next one waits this many milliseconds of game time. 0 = no cooldown.") \
     X(NO_REPEAT, B, "1", "nitoryu no repeat", "Nitoryu 07 moves", "Moves", "no_repeat", \
       "The second blade does not use the same move twice in a row when another one fits.") \
+    X(EVEN_PICKS, B, "1", "nitoryu even picks", "Nitoryu 07 moves", "Moves", "even_picks", \
+      "Of the second blade's moves that come up for a pick, the fighter takes the one it has used least, so every move is seen about as often. Off: the first that comes up, by the game's own weights.") \
+    X(CROSS_RIPOSTE_CHANCE, F, "0.25", "nitoryu cross riposte chance", "Nitoryu 07 moves", "Moves", "cross_riposte_chance", \
+      "Chance that the answer to a block or a parry is the X cut (the riposte finisher); otherwise it is an ordinary riposte.") \
     X(OFF_CARRY_ON, B, "1", "nitoryu off hand carry", "Nitoryu 07 moves", "Moves", "offhand_carry", \
       "A second-blade turn that found no move in reach waits for the next attack instead of being lost.") \
     X(OFF_CARRY_MS, I, "3000", "nitoryu off hand carry ms", "Nitoryu 07 moves", "", "", \
@@ -255,4 +265,9 @@
       "The mouse over a mark shows the skill's name and what it does.") \
     \
     X(STATS_GROUP, I, "1", "nitoryu stats line group", "Nitoryu 16 stats window", "Stats", "group", \
-      "Where the Dual Wielding line sits in the character's stats window: 1 = at the end of the Weapons group; 2 = in the Combat group, after its last skill (the Ranged group moves down a row).")
+      "Where the Dual Wielding line sits in the character's stats window: 1 = at the end of the Weapons group; 2 = in the Combat group, after its last skill (the Ranged group moves down a row).") \
+    \
+    X(RUN_HOLD_FREE_WEIGHT, F, "0.5", "nitoryu run hold free weight", "Nitoryu 17 animations", "Animations", "run_hold_free_weight", \
+      "The two-blade run draws the arms and the torso over the legs of the run that is playing. When it cannot keep in step with that run (another mod's run animation), the torso takes only this share of the pose, 0-1: 0 = the torso is left to the other run, 1 = fully ours. The arms always take it in full.") \
+    X(YIELD_TO_REACTIONS, B, "1", "nitoryu yield to reactions", "Nitoryu 17 animations", "Animations", "yield_to_reactions", \
+      "While the game plays a stagger, a knockdown, a knockout or a get-up on a dual fighter, the dual pose steps aside and that animation shows, the game's own or another mod's. Off: the dual pose stays on the upper body through it.")

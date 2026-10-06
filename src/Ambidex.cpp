@@ -9,6 +9,8 @@
 #include <kenshi/CharStats.h>
 #include <kenshi/Damages.h>
 #include <kenshi/Gear.h>
+#include <kenshi/Inventory.h>
+#include <kenshi/Item.h>
 #include <kenshi/GameData.h>
 #include <kenshi/Faction.h>
 #include <kenshi/gui/CharacterStatsWindow.h>
@@ -18,6 +20,7 @@
 #include <kenshi/combat/CombatTechniqueData.h>
 
 #include <mygui/MyGUI_TextBox.h>
+#include <mygui/MyGUI_Window.h>
 #include <mygui/MyGUI_Widget.h>
 #include <mygui/MyGUI_InputManager.h>
 #include <OgreResourceGroupManager.h>
@@ -30,6 +33,7 @@
 #include <map>
 #include <string>
 
+#include "core/Math.h"
 #include "Ambidex.h"
 #include "Combat.h"
 #include "Defense.h"
@@ -46,6 +50,7 @@
 #include "Diagnostics.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -77,6 +82,7 @@ namespace
         std::string rank[6];
         std::string ranksTitle, rankOpens[6], rankNeeds, rankNeedsDp;
         std::string rankUp;
+        std::string rankUpOpens;
         std::string marksTitle, markFlow, markMugen, markPressure;
         std::string pathTitle, pathFormula, pathNote;
     };
@@ -348,9 +354,11 @@ namespace
     void (*serialise_orig)(CharStats*, GameData*) = NULL;
     void serialise_hook(CharStats* self, GameData* data)
     {
+        diag::HookCall hc(diag::HK_SERIALISE);
         serialise_orig(self, data);
         if (!g_enabled || self == NULL || self->me == NULL || data == NULL)
             return;
+        hc.ours();
         float a = 0.0f;
         if (lookup(self->me, a) && finite(a))
         {
@@ -401,6 +409,7 @@ namespace
     void (*updateStats_orig)(CharStats*, GameData*) = NULL;
     void updateStats_hook(CharStats* self, GameData* data)
     {
+        diag::HookCall hc(diag::HK_UPDATE_STATS);
 
         bool has = false;
         float a = 0.0f;
@@ -422,6 +431,8 @@ namespace
             rankMax = finite(r) && r >= 0.0f ? (int)(r + 0.5f) : -1;
         }
         updateStats_orig(self, data);
+        if (has || dualOff >= 0 || anyWeapon >= 0 || rankMax >= 0)
+            hc.ours();
         if (rankMax >= 0 && self != NULL && self->me != NULL)
         {
             Lock l;
@@ -450,6 +461,8 @@ namespace
     void (*charDtor_orig)(Character*) = NULL;
     void charDtor_hook(Character* self)
     {
+        diag::HookCall hc(diag::HK_CHAR_DTOR);
+        hc.ours();
         {
             Lock l;
             g_amb.erase(self);
@@ -478,13 +491,16 @@ namespace
     void (*increase_orig)(float&, float, float) = NULL;
     void increase_hook(float& stat, float amount, float limit)
     {
+        diag::HookCall hc(diag::HK_INCREASE_STAT);
         if (t_capStat != NULL && &stat == t_capStat)
         {
+            hc.ours();
             t_capAmount += amount;
             t_capLimit = limit;
         }
         else if (t_capDefence != NULL && &stat == t_capDefence)
         {
+            hc.ours();
             t_capDefenceAmount += amount;
             t_capLimit = limit;
         }
@@ -554,6 +570,7 @@ namespace
     void (*xpMelee_orig)(CharStats*, CharStats::DeadTimeState, Character*, const Damages&) = NULL;
     void xpMelee_hook(CharStats* self, CharStats::DeadTimeState what, Character* target, const Damages& damage)
     {
+        diag::HookCall hc(diag::HK_XP_MELEE);
         Character* me = self != NULL ? self->me : NULL;
         if (!g_enabled || me == NULL || target == NULL || self->pCurrentWeaponSkill == NULL)
         {
@@ -567,6 +584,7 @@ namespace
             xpMelee_orig(self, what, target, damage);
             return;
         }
+        hc.ours();
 
         bool offAttack = (what == CharStats::ATTACK_HIT || what == CharStats::ATTACK_WAS_BLOCKED)
             && t_impactAttacker == me && t_impactOff;
@@ -702,9 +720,13 @@ namespace
     void (*lineResize_orig)(DataPanelLine*, int, int) = NULL;
     void lineResize_hook(DataPanelLine* self, int width, int height)
     {
+        diag::HookCall hc(diag::HK_LINE_RESIZE);
         lineResize_orig(self, width, height);
         if (self != NULL && self == g_barLine)
+        {
+            hc.ours();
             fixBarFill(self);
+        }
     }
 
     const std::string NEXT_LEVEL_COLOUR = "#767676";
@@ -735,6 +757,27 @@ namespace
         fixBarFill(g_barLine);
     }
 
+    const char* const TITLE_SKIN = "Kenshi_WordWrapEmpty_StandardText_Large";
+
+    std::string titleColour(CharacterStatsWindow* win)
+    {
+        DatapanelGUI* panel = win != NULL ? win->skills1Datapanel : NULL;
+        if (panel == NULL)
+            return "";
+        const int cat = panel->getCurrentCategory();
+        const int n = panel->getNumLines(cat);
+        for (int i = 0; i < n && i < 64; ++i)
+        {
+            DataPanelLine* l = panel->getLineByNum(cat, i);
+            if (l == NULL || l->w1 == NULL || l->skinW1 != TITLE_SKIN)
+                continue;
+            const std::string cap = l->w1->getCaption().asUTF8();
+            if (cap.size() > 7 && cap[0] == '#' && cap[1] != '#')
+                return cap.substr(0, 7);
+        }
+        return "";
+    }
+
     void fillDescription(CharacterStatsWindow* win, float a, bool rightToo)
     {
         DatapanelGUI* left = win->description1Datapanel;
@@ -747,7 +790,8 @@ namespace
         if (rightToo)
             right->clear();
         int lc = left->getCurrentCategory();
-        left->setLine(g_label, "", lc, false, true);
+
+        left->setLine(titleColour(win) + g_label, "", TITLE_SKIN, TITLE_SKIN, lc);
         left->setLine(heading(g_text.affectsTitle), "", lc, false, true);
         left->setLine(g_text.affects, "", lc, false, true);
         left->setLine(heading(g_text.trainTitle), "", lc, false, true);
@@ -1020,12 +1064,88 @@ namespace
             setProgress(win->description2Datapanel, a);
     }
 
+    const char* const RANK_TAG_NAME = "Nitoryu_rank_tag";
+    const char* const RANK_TAG_SKIN = "Kenshi_TextboxStandardText";
+    const char* const RANK_TAG_FONT = "Kenshi_StandardFont_Small";
+    const int RANK_TAG_GAP = 10;
+    bool g_rankTag = false;
+    bool g_rankTagFailed = false;
+
+    void setRankTag(CharacterStatsWindow* win)
+    {
+        if (!g_rankTag || g_rankTagFailed || win == NULL || win->character == NULL || win->mMainWidget == NULL)
+            return;
+
+        try
+        {
+            MyGUI::Window* root = win->mMainWidget->castType<MyGUI::Window>(false);
+            MyGUI::TextBox* cap = root != NULL ? root->getCaptionWidget() : NULL;
+            if (cap == NULL)
+            {
+                static bool told = false;
+                if (!told)
+                    diag::count("rank_tag_no_caption");
+                told = true;
+                return;
+            }
+            MyGUI::TextBox* tag = NULL;
+            for (size_t i = 0; i < cap->getChildCount() && tag == NULL; ++i)
+                if (cap->getChildAt(i)->getName() == RANK_TAG_NAME)
+                    tag = cap->getChildAt(i)->castType<MyGUI::TextBox>(false);
+            stance::Preview p = stance::preview(win->character);
+            const bool show = p.tier >= 1 && stance::hasPair(win->character);
+            if (tag == NULL)
+            {
+                if (!show)
+                    return;
+                tag = cap->createWidget<MyGUI::TextBox>(RANK_TAG_SKIN, MyGUI::IntCoord(0, 0, 60, cap->getHeight()), MyGUI::Align::Default,
+                                                        RANK_TAG_NAME);
+                if (tag == NULL)
+                    return;
+                tag->setNeedMouseFocus(false);
+                tag->setNeedKeyFocus(false);
+                tag->setFontName(RANK_TAG_FONT);
+                tag->setTextAlign(MyGUI::Align::Left | MyGUI::Align::VCenter);
+                diag::count("rank_tag_created");
+            }
+            if (!show)
+            {
+                if (tag->getVisible())
+                    tag->setVisible(false);
+                return;
+            }
+            const int tier = p.tier > 5 ? 5 : p.tier;
+            const std::string text = rankColour(tier) + rankName(tier);
+            if (tag->getCaption().asUTF8() != text)
+                tag->setCaption(text);
+
+            const MyGUI::IntSize name = cap->getTextSize();
+            const MyGUI::IntCoord region = cap->getTextRegion();
+            const int nameRight = cap->getTextAlign().isHCenter() ? region.left + (region.width + name.width) / 2
+                                                                  : region.left + name.width;
+            const int w = tag->getTextSize().width * 108 / 100 + 8;
+            tag->setCoord(nameRight + RANK_TAG_GAP, 0, w, cap->getHeight());
+            if (!tag->getVisible())
+                tag->setVisible(true);
+        }
+        catch (...)
+        {
+            g_rankTagFailed = true;
+            diag::count("rank_tag_failed");
+        }
+    }
+
     void (*statsWindow_orig)(CharacterStatsWindow*) = NULL;
     void statsWindow_hook(CharacterStatsWindow* self)
     {
+        diag::HookCall hc(diag::HK_STATS_WINDOW);
         statsWindow_orig(self);
         if (g_enabled)
+        {
+            hc.ours();
             setStatsLine(self);
+            setRankTag(self);
+        }
     }
 
     bool hook(KenshiLib::HookStatus s, const char* what)
@@ -1100,6 +1220,7 @@ namespace ambidex
             { "rank_needs", "stats.rank_needs", &g_text.rankNeeds },
             { "rank_needs_dp", "stats.rank_needs_dp", &g_text.rankNeedsDp },
             { "rank_up", "stats.rank_up", &g_text.rankUp },
+            { "rank_up_opens", "stats.rank_up_opens", &g_text.rankUpOpens },
             { "marks_title", "stats.marks_title", &g_text.marksTitle },
             { "mark_flow", "stats.mark_flow", &g_text.markFlow },
             { "mark_mugen", "stats.mark_mugen", &g_text.markMugen },
@@ -1110,6 +1231,7 @@ namespace ambidex
         };
         g_coloursOn = GetPrivateProfileIntA("Stats", "rank_colours", 1, path.c_str()) != 0;
         g_rankUpMessage = GetPrivateProfileIntA("Stats", "rank_up_message", 1, path.c_str()) != 0;
+        g_rankTag = GetPrivateProfileIntA("Stats", "rank_in_title", 0, path.c_str()) != 0;
         for (int i = 0; i < (int)(sizeof(t) / sizeof(t[0])); ++i)
         {
             char v[512] = { 0 };
@@ -1121,26 +1243,26 @@ namespace ambidex
     bool installHooks()
     {
         bool ok = true;
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::serialise), serialise_hook, &serialise_orig),
+        ok &= hook(hooks::add("CharStats::serialise", "ambidex", KenshiLib::GetRealAddress(&CharStats::serialise), serialise_hook, &serialise_orig),
                    "CharStats::serialise");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::updateStats), updateStats_hook, &updateStats_orig),
+        ok &= hook(hooks::add("CharStats::updateStats", "ambidex", KenshiLib::GetRealAddress(&CharStats::updateStats), updateStats_hook, &updateStats_orig),
                    "CharStats::updateStats");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::xpMelee), xpMelee_hook, &xpMelee_orig),
+        ok &= hook(hooks::add("CharStats::xpMelee", "ambidex", KenshiLib::GetRealAddress(&CharStats::xpMelee), xpMelee_hook, &xpMelee_orig),
                    "CharStats::xpMelee");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&increaseStat), increase_hook, &increase_orig),
+        ok &= hook(hooks::add("increaseStat", "ambidex", KenshiLib::GetRealAddress(&increaseStat), increase_hook, &increase_orig),
                    "increaseStat");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharacterStatsWindow::_NV_update), statsWindow_hook,
+        ok &= hook(hooks::add("CharacterStatsWindow::update", "ambidex", KenshiLib::GetRealAddress(&CharacterStatsWindow::_NV_update), statsWindow_hook,
                                       &statsWindow_orig),
                    "CharacterStatsWindow::update");
 
-        hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&DataPanelLine::_NV_resize), lineResize_hook, &lineResize_orig),
+        hook(hooks::add("DataPanelLine::resize", "ambidex", KenshiLib::GetRealAddress(&DataPanelLine::_NV_resize), lineResize_hook, &lineResize_orig),
              "DataPanelLine::resize");
         return ok;
     }
 
     bool installLifetimeHook()
     {
-        return hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&Character::_DESTRUCTOR), charDtor_hook, &charDtor_orig),
+        return hook(hooks::add("Character::~Character", "core", KenshiLib::GetRealAddress(&Character::_DESTRUCTOR), charDtor_hook, &charDtor_orig),
                     "Character destructor");
     }
 
@@ -1177,6 +1299,17 @@ namespace ambidex
         replaceAll(msg, "{rank}", name);
         if (ou != NULL && !msg.empty())
             ou->showPlayerAMessage(msg, true);
+
+        std::string opens = g_text.rankUpOpens;
+        const std::string& what = g_text.rankOpens[tier];
+        if (ou != NULL && !opens.empty() && !what.empty())
+        {
+            replaceAll(opens, "{who}", c->displayName);
+            replaceAll(opens, "{rank}", name);
+            replaceAll(opens, "{opens}", what);
+            ou->showPlayerAMessage(opens, true);
+            diag::count("rank_up_opens_shown");
+        }
     }
 
     std::string testText()
@@ -1261,6 +1394,43 @@ namespace ambidex
         return a;
     }
 
+    float armourCut(Character* c, int& pieces)
+    {
+        pieces = 0;
+        Inventory* inv = c != NULL ? c->getInventory() : NULL;
+        if (inv == NULL)
+            return 0.0f;
+        const float heavy = cfg::f(cfg::ARMOUR_HEAVY_CUT), medium = cfg::f(cfg::ARMOUR_MEDIUM_CUT);
+        float cut = 0.0f;
+        lektor<InventorySection*>& secs = inv->getAllSections();
+        for (uint32_t i = 0; i < secs.size(); ++i)
+        {
+            InventorySection* s = secs[i];
+            if (s == NULL || !s->isAnEquippedItemSection || s->containerSlot)
+                continue;
+            const Ogre::vector<InventorySection::SectionItem>::type& items = s->getItems();
+            for (size_t k = 0; k < items.size(); ++k)
+            {
+                Item* it = items[k].item;
+                if (it == NULL || it->isArmour() == NULL || it->data == NULL)
+                    continue;
+                float own = kit::fcsFloat(it->data, "nitoryu dual wielding cut", -1.0f);
+                float pc = own >= 0.0f ? own : 0.0f;
+                if (own < 0.0f)
+                {
+                    int cls = kit::fcsInt(it->data, "class", 0);
+                    pc = cls == 3 ? heavy : cls == 2 ? medium : 0.0f;
+                }
+                if (pc > 0.0f)
+                {
+                    cut += pc;
+                    ++pieces;
+                }
+            }
+        }
+        return cut;
+    }
+
     Effective effective(Character* c)
     {
         Effective e;
@@ -1269,26 +1439,15 @@ namespace ambidex
         e.overload = 0.0f;
         e.overloadMult = 1.0f;
         e.armourMult = 1.0f;
+        e.armourPieces = 0;
         CharStats* st = c != NULL ? c->getStats() : NULL;
         if (st == NULL)
             return e;
-        float m = st->encumbranceMult;
-        if (finite(m) && m < 0.999f)
-        {
-            if (m < 0.0f)
-                m = 0.0f;
-            e.overload = 1.0f / (0.05f + 0.95f * m) - 1.0f;
-            float f = e.overload <= 0.05f ? 1.0f - 5.5f * e.overload : 0.75f - 0.5f * e.overload;
-            float lo = cfg::f(cfg::OVERLOAD_FLOOR);
-            e.overloadMult = f < lo ? lo : f;
-        }
-        float csm = st->combatSpeedMultiplier;
-        if (finite(csm) && csm < 1.0f)
-        {
-            float f = 1.0f - cfg::f(cfg::ARMOUR_PENALTY) * (1.0f - csm);
-            float lo = cfg::f(cfg::ARMOUR_FLOOR);
-            e.armourMult = f < lo ? lo : f;
-        }
+
+        e.overload = core::overloadOf(st->encumbranceMult);
+        if (e.overload != 0.0f)
+            e.overloadMult = core::overloadFactor(e.overload, cfg::f(cfg::OVERLOAD_FLOOR));
+        e.armourMult = core::armourFactor(armourCut(c, e.armourPieces), cfg::f(cfg::ARMOUR_FLOOR));
         e.eff = e.a * e.overloadMult * e.armourMult;
         return e;
     }

@@ -4,6 +4,8 @@
 #include "kit/diag.h"
 
 #include <cstdio>
+#include <exception>
+#include <string>
 
 namespace
 {
@@ -13,6 +15,18 @@ namespace
     int g_detailLeft = DETAIL_BUDGET;
     unsigned g_mainThread = 0;
     diag::Level g_level = diag::NORMAL;
+
+    const char* HOOK_NAMES[diag::HK_COUNT] = {
+        "set_weapon", "weight_speed", "attack_speed", "melee_attack", "block_chance",
+        "equipped_skill", "choose_attack", "hit_by", "i_hit", "init_block", "serialise", "update_stats",
+        "char_dtor", "increase_stat", "xp_melee", "xp_training", "operate", "stats_window", "line_resize",
+        "refresh_section", "cell_update", "who_attacks", "tech_ctor", "add_wound", "update_transforms",
+        "melee_task" };
+    volatile LONGLONG g_hookCalls[diag::HK_COUNT];
+    volatile LONGLONG g_hookOurs[diag::HK_COUNT];
+    volatile LONGLONG g_hookPassed[diag::HK_COUNT];
+    volatile LONGLONG g_hookThrown[diag::HK_COUNT];
+    volatile LONGLONG g_hookOffMain[diag::HK_COUNT];
 
     struct Lock
     {
@@ -105,6 +119,60 @@ namespace diag
         }
         --g_detailLeft;
         return true;
+    }
+
+    HookCall::HookCall(Hook h) : h_(h), ours_(false)
+    {
+        InterlockedIncrement64(&g_hookCalls[h]);
+        if (g_mainThread != 0 && GetCurrentThreadId() != g_mainThread)
+            InterlockedIncrement64(&g_hookOffMain[h]);
+    }
+
+    HookCall::~HookCall()
+    {
+        if (std::uncaught_exception())
+            InterlockedIncrement64(&g_hookThrown[h_]);
+        else
+            InterlockedIncrement64(ours_ ? &g_hookOurs[h_] : &g_hookPassed[h_]);
+    }
+
+    void emitHooks()
+    {
+        if (g_level == OFF)
+            return;
+        std::string line("hooks");
+        for (int h = 0; h < HK_COUNT; ++h)
+        {
+
+            LONGLONG ours = g_hookOurs[h], passed = g_hookPassed[h], thrown = g_hookThrown[h];
+            LONGLONG calls = g_hookCalls[h];
+            if (calls == 0)
+                continue;
+            char b[160];
+            if (thrown > 0)
+                sprintf_s(b, " %s=%lld/%lld/%lld/%lld", HOOK_NAMES[h], calls, ours, passed, thrown);
+            else
+                sprintf_s(b, " %s=%lld/%lld/%lld", HOOK_NAMES[h], calls, ours, passed);
+            line += b;
+
+            LONGLONG off = g_hookOffMain[h];
+            if (off == 0)
+                line += "@main";
+            else if (off >= calls)
+                line += "@other";
+            else
+            {
+                sprintf_s(b, "@both:%lld", off);
+                line += b;
+            }
+            LONGLONG open = calls - ours - passed - thrown;
+            if (open != 0)
+            {
+                sprintf_s(b, " %s_open=%lld", HOOK_NAMES[h], open);
+                line += b;
+            }
+        }
+        kit::log::line(line);
     }
 
     unsigned mainThread() { return g_mainThread; }

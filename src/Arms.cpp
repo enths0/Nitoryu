@@ -28,6 +28,8 @@
 #include "Defense.h"
 #include "Feedback.h"
 #include "kit/diag.h"
+#include "Hooks.h"
+#include "Settings.h"
 
 namespace
 {
@@ -70,6 +72,10 @@ namespace
     bool g_clipFoundLogged[arms::CLIP_COUNT] = { false };
     bool g_clipMissLogged[arms::CLIP_COUNT] = { false };
     const float RUN_FADE_S = 0.15f;
+
+    const float RUN_UNLOCK_MIN = 0.96f;
+    const float RUN_PHASE_SNAP = 0.08f;
+    const float RUN_PHASE_EASE_S = 0.10f;
 
     const float STANCE_FADE_S = 0.40f;
     const float STANCE_CROSS_S = 0.80f;
@@ -120,6 +126,7 @@ namespace
         std::string checkName;
         std::vector<unsigned char> clipBone;
         std::vector<unsigned char> legBone;
+        std::vector<unsigned char> torso;
         int root;
         int thigh[2];
         std::vector<Ogre::Quaternion> bindQ;
@@ -140,7 +147,9 @@ namespace
         std::vector<Ogre::Quaternion> src, written, tgt, from, out, guard;
         std::vector<Ogre::Vector3> srcP, writtenP, tgtP, fromP, outP, guardP;
         bool haveGuard;
-        LARGE_INTEGER lastT;
+        double lastMs;
+        int reacting;
+        int appliedReacting;
         double parryStart;
 
         std::vector<Ogre::Quaternion> snap[BLOCK_SNAPS];
@@ -359,6 +368,7 @@ namespace
                 rig.role[rig.spine[k]] = SPINE;
         rig.clipBone.assign(n, 0);
         rig.legBone.assign(n, 0);
+        rig.torso.assign(n, 0);
         rig.root = -1;
         rig.thigh[0] = handleOf(sk, "Bip01 L Thigh");
         rig.thigh[1] = handleOf(sk, "Bip01 R Thigh");
@@ -377,6 +387,7 @@ namespace
                         || nm.compare(8, std::string::npos, "Foot") == 0 || nm.compare(8, std::string::npos, "Toe0") == 0));
             if (nm == "Bip01")
                 rig.root = i;
+            rig.torso[i] = rig.role[i] == SPINE || i == lc || i == rc || nm == "Bip01 Neck" || nm == "Bip01 Head";
         }
         rig.checkHandle = lh;
         rig.checkName = names[lh];
@@ -875,7 +886,10 @@ namespace
             || k == arms::CLIP_ANGLED_L || k == arms::CLIP_ANGLED_R || k == arms::CLIP_ANGLED_L_IMPACT
             || k == arms::CLIP_ANGLED_R_IMPACT || k == arms::CLIP_MAIN_OVERHEAD || k == arms::CLIP_MAIN_OVERHEAD_IMPACT
 
-            || k == arms::CLIP_MAIN_BLOCK || k == arms::CLIP_MAIN_IMPACT;
+            || k == arms::CLIP_MAIN_BLOCK || k == arms::CLIP_MAIN_IMPACT
+
+            || k == arms::CLIP_BACK_LOW || k == arms::CLIP_BACK_LOW_MAIN || k == arms::CLIP_BACK_HIGH
+            || k == arms::CLIP_BACK_HIGH_MAIN;
     }
 
     bool reactionClip(int k)
@@ -883,8 +897,9 @@ namespace
         return k == arms::CLIP_BLOCK_LEFT || k == arms::CLIP_OFF_BLOCK || k == arms::CLIP_OFF_BLOCK_FWD
             || k == arms::CLIP_DUAL_IMPACT_L || k == arms::CLIP_DUAL_IMPACT_R
             || k == arms::CLIP_ANGLED_L_IMPACT || k == arms::CLIP_ANGLED_R_IMPACT || k == arms::CLIP_MAIN_OVERHEAD_IMPACT
-            || k == arms::CLIP_BROKEN_ANGLED_L || k == arms::CLIP_BROKEN_ANGLED_R || k == arms::CLIP_BROKEN_SCISSOR
-            || k == arms::CLIP_MAIN_IMPACT || k == arms::CLIP_HIT_TAKEN;
+            || k == arms::CLIP_MAIN_IMPACT || k == arms::CLIP_HIT_TAKEN
+            || k == arms::CLIP_BACK_LOW || k == arms::CLIP_BACK_LOW_MAIN || k == arms::CLIP_BACK_HIGH
+            || k == arms::CLIP_BACK_HIGH_MAIN;
     }
 
     bool g_angledSwap = false;
@@ -912,6 +927,15 @@ namespace
         if (g_clipOn[arms::CLIP_MAIN_BLOCK] && (!g_clipOn[arms::CLIP_SCISSOR] || (rand() & 1)))
             return arms::CLIP_MAIN_BLOCK;
         return g_clipOn[arms::CLIP_SCISSOR] ? (int)arms::CLIP_SCISSOR : -1;
+    }
+
+    int backGuardClip(bool mainBlade, int dir)
+    {
+        if (!g_clipOn[arms::CLIP_BACK_LOW])
+            return -1;
+        bool high = dir == CUT_DOWNWARD || dir == CUT_REAR_DOWNWARD || (dir < 0 && (rand() & 1));
+        return mainBlade ? (high ? arms::CLIP_BACK_HIGH_MAIN : arms::CLIP_BACK_LOW_MAIN)
+                         : (high ? arms::CLIP_BACK_HIGH : arms::CLIP_BACK_LOW);
     }
 
     int parryClip()
@@ -977,6 +1001,12 @@ namespace
         {
             s.clipYield = age;
             diag::count("l3_clip_yield_foreign");
+        }
+
+        if (s.clipYield < 0.0f && s.reacting == arms::REACT_DOWN)
+        {
+            s.clipYield = age;
+            diag::count("l3_clip_yield_down");
         }
         float give = 1.0f;
         if (s.clipYield >= 0.0f)
@@ -1096,7 +1126,25 @@ namespace
         return sum * 0.5f;
     }
 
-    bool legPhase(Ogre::Skeleton* sk, State& s, float& phase, float& baseLen)
+    Ogre::Animation* findAnimationLinked(Ogre::Skeleton* sk, const char* name)
+    {
+        Ogre::Animation* a = findAnimation(sk, name);
+        if (a != NULL)
+            return a;
+        Ogre::Skeleton::LinkedSkeletonAnimSourceIterator li = sk->getLinkedSkeletonAnimationSourceIterator();
+        while (li.hasMoreElements())
+        {
+            Ogre::Skeleton* ls = li.getNext().pSkeleton.get();
+            if (ls != NULL && (a = findAnimation(ls, name)) != NULL)
+            {
+                diag::count("run_base_from_linked");
+                return a;
+            }
+        }
+        return NULL;
+    }
+
+    bool legPhase(Ogre::Skeleton* sk, State& s, float minMatch, float& phase, float& baseLen)
     {
         const Rig& rig = s.rig;
         if (rig.thigh[0] < 0 || rig.thigh[1] < 0 || rig.thigh[0] >= rig.n || rig.thigh[1] >= rig.n)
@@ -1104,7 +1152,7 @@ namespace
         if (!s.runBaseTried)
         {
             s.runBaseTried = true;
-            s.runBase = findAnimation(sk, RUN_BASE_TRACK);
+            s.runBase = findAnimationLinked(sk, RUN_BASE_TRACK);
         }
         Ogre::Animation* base = s.runBase;
         if (base == NULL || base->getLength() <= 0.0f)
@@ -1129,7 +1177,7 @@ namespace
                 bt = step * (float)i;
             }
         }
-        if (best < RUN_MATCH_MIN)
+        if (best < minMatch)
             return false;
         float lo = bt - step, hi = bt + step;
         for (int i = 0; i < 6; ++i)
@@ -1150,7 +1198,8 @@ namespace
 
     void applyRunClip(Ogre::Skeleton* sk, State& s, Mode mode, bool other)
     {
-        bool want = s.running && mode == MIRROR && !other && !s.foreign && g_clipOn[arms::CLIP_RUN_TRAIL];
+        bool want = s.running && mode == MIRROR && !other && !s.foreign && s.reacting == arms::REACT_NONE
+                    && g_clipOn[arms::CLIP_RUN_TRAIL];
         double now = defense::frameMs();
         float dt = (float)std::max(0.0, std::min(250.0, now - s.runLast)) / 1000.0f;
         s.runLast = now;
@@ -1166,7 +1215,8 @@ namespace
         if (s.runClip < 0)
             return;
 
-        bool attack = mode == HOLD || mode == SWAP || mode == TWIN || mode == BLOCK || s.foreign;
+        bool attack = mode == HOLD || mode == SWAP || mode == TWIN || mode == BLOCK || s.foreign
+                      || s.reacting != arms::REACT_NONE;
         if (attack && s.runW > 0.0f)
             diag::count("run_hold_overlaps_attack");
         s.runW += (want ? dt : -dt) / (attack ? CLIP_YIELD_S : RUN_FADE_S);
@@ -1191,10 +1241,23 @@ namespace
 
         float phase = 0.0f, baseLen = a->getLength();
         bool locked = false;
-        try { locked = legPhase(sk, s, phase, baseLen); }
+
+        const float minMatch = s.runPhaseCounted && s.runLocked ? RUN_UNLOCK_MIN : RUN_MATCH_MIN;
+        try { locked = legPhase(sk, s, minMatch, phase, baseLen); }
         catch (...) { locked = false; }
         if (locked)
-            s.runPhase = phase;
+        {
+
+            float diff = phase - s.runPhase;
+            diff -= std::floor(diff + 0.5f);
+            if (!s.runPhaseCounted || std::fabs(diff) <= RUN_PHASE_SNAP)
+                s.runPhase = phase;
+            else
+            {
+                s.runPhase += dt / baseLen + diff * std::min(1.0f, dt / RUN_PHASE_EASE_S);
+                s.runPhase -= std::floor(s.runPhase);
+            }
+        }
         else
         {
             s.runPhase += dt / baseLen;
@@ -1202,10 +1265,14 @@ namespace
         }
         if (!s.runPhaseCounted || locked != s.runLocked)
         {
+            if (s.runPhaseCounted)
+                diag::count("run_hold_lock_flips");
             s.runPhaseCounted = true;
             s.runLocked = locked;
             diag::count(locked ? "run_hold_phase_locked" : "run_hold_phase_free");
         }
+
+        const float torsoEnv = locked ? env : env * cfg::f(cfg::RUN_HOLD_FREE_WEIGHT);
         Ogre::TimeIndex ti(std::min(s.runPhase * baseLen, a->getLength() - 0.001f));
         Ogre::TransformKeyFrame kf(NULL, 0.0f);
         for (Ogre::Animation::OldNodeTrackList::const_iterator it = tl.begin(); it != tl.end(); ++it)
@@ -1214,7 +1281,7 @@ namespace
             if (h >= rig.n || !rig.clipBone[h] || it->second == NULL)
                 continue;
             it->second->getInterpolatedKeyFrame(ti, &kf);
-            s.tgt[h] = Ogre::Quaternion::Slerp(env, s.tgt[h], rig.bindQ[h] * kf.getRotation(), true);
+            s.tgt[h] = Ogre::Quaternion::Slerp(rig.torso[h] ? torsoEnv : env, s.tgt[h], rig.bindQ[h] * kf.getRotation(), true);
             if (h == rig.prop1 || h == rig.prop2)
             {
                 Ogre::Vector3 p = rig.bindP[h] + kf.getTranslate() * s.clipScale[s.runClip];
@@ -1273,7 +1340,9 @@ namespace
     void applyStanceClip(Ogre::Skeleton* sk, State& s, Mode mode, bool other)
     {
         int byRank = g_clipOn[arms::CLIP_STANCE_DESHI] ? stanceForRank(s.rank) : -1;
-        bool want = s.inCombat && mode == MIRROR && !other && !s.running && !s.foreign && byRank >= 0;
+
+        bool want = s.inCombat && mode == MIRROR && !other && !s.running && !s.foreign && s.reacting == arms::REACT_NONE
+                    && byRank >= 0;
         double now = defense::frameMs();
         float dt = (float)std::max(0.0, std::min(250.0, now - s.stLast)) / 1000.0f;
         s.stLast = now;
@@ -1299,7 +1368,9 @@ namespace
             diag::count(CLIP_PLAYED[s.stCur]);
             diag::count("l3_stance_rank_changed");
         }
-        bool action = mode != MIRROR || other || s.foreign;
+        bool action = mode != MIRROR || other || s.foreign || s.reacting != arms::REACT_NONE;
+        if (s.reacting != arms::REACT_NONE && s.stW > 0.0f && diag::stage())
+            diag::count("l3_stance_yield_reaction_frame");
         s.stW += (want ? dt : -dt) / (action ? CLIP_YIELD_S : STANCE_FADE_S);
         if (s.stW <= 0.0f && !want)
         {
@@ -1326,6 +1397,15 @@ namespace
         s.tgt = s.src;
         s.tgtP = s.srcP;
         if (mode == TWIN)
+        {
+
+            for (int i = 0; i < rig.n; ++i)
+                if (rig.role[i] == LEFT_ARM)
+                    s.tgt[i] = mirrorRot(rig, i, s.src);
+            s.tgtP[rig.prop1] = mirrorPos(rig, rig.prop1, s.srcP);
+            return;
+        }
+        if (mode == LEFTY && s.reacting == arms::REACT_DOWN)
         {
 
             for (int i = 0; i < rig.n; ++i)
@@ -1366,16 +1446,17 @@ namespace
             return;
         }
 
-        if (mode == MIRROR && inCombat && g_square > 0.0f)
+        const bool reacting = s.reacting != arms::REACT_NONE;
+        if (mode == MIRROR && inCombat && g_square > 0.0f && !reacting)
             squareChest(rig, s.tgt, g_square);
-        if (mode == MIRROR)
+        if (mode == MIRROR && !reacting)
             uncrossRight(rig, s.tgt, s.srcP, g_uncross);
         for (int i = 0; i < rig.n; ++i)
             if (rig.role[i] == LEFT_ARM)
                 s.tgt[i] = mirrorRot(rig, i, s.tgt);
         s.tgtP[rig.prop1] = mirrorPos(rig, rig.prop1, s.tgtP);
 
-        if (mode == MIRROR && inCombat)
+        if (mode == MIRROR && inCombat && !reacting)
         {
             for (int i = 0; i < rig.n; ++i)
                 if (rig.role[i] == LEFT_ARM || rig.role[i] == RIGHT_ARM)
@@ -1401,11 +1482,13 @@ namespace
             diag::count("arms_rig_changed");
             return;
         }
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        float dt = s.started ? (float)(now.QuadPart - s.lastT.QuadPart) / (float)g_freq.QuadPart : 0.0f;
-        s.lastT = now;
-        if (dt < 0.0f || dt > 0.25f)
+
+        const double nowMs = defense::frameMs();
+        float dt = s.started && s.lastMs >= 0.0 ? (float)((nowMs - s.lastMs) / 1000.0) : 0.0f;
+        s.lastMs = nowMs;
+        if (dt < 0.0f)
+            dt = 0.0f;
+        else if (dt > 0.25f)
             dt = 0.25f;
 
         readSource(sk, s);
@@ -1413,7 +1496,11 @@ namespace
         if (mode == SWAP && !g_swap)
             mode = HOLD;
         int attackNow = (mode == TWIN || mode == SWAP) ? s.attackClip : -1;
-        if (!s.started || mode != s.appliedMode || s.inCombat != s.appliedCombat || attackNow != s.appliedAttack)
+        if (s.reacting != s.appliedReacting && s.started)
+            diag::count(s.reacting == arms::REACT_DOWN ? "pose_reacting_down" : s.reacting == arms::REACT_STAGGER
+                        ? "pose_reacting_stagger" : "pose_reacting_end");
+        if (!s.started || mode != s.appliedMode || s.inCombat != s.appliedCombat || attackNow != s.appliedAttack
+            || s.reacting != s.appliedReacting)
         {
 
             s.from = s.started ? s.out : s.src;
@@ -1425,6 +1512,7 @@ namespace
             s.appliedMode = mode;
             s.appliedCombat = s.inCombat;
             s.appliedAttack = attackNow;
+            s.appliedReacting = s.reacting;
         }
         if (s.clipSwap)
         {
@@ -1444,7 +1532,8 @@ namespace
         bool clipPlays = ((mode == TWIN || mode == SWAP) && applyAttackClip(sk, s)) || applyClip(sk, s, mode);
         applyRunClip(sk, s, mode, clipPlays);
         applyStanceClip(sk, s, mode, clipPlays || s.runClip >= 0);
-        if (!clipPlays && s.parryStart >= 0.0 && g_parryPose > 0.0f && mode != SWAP && mode != TWIN && mode != LEFTY)
+        if (!clipPlays && s.parryStart >= 0.0 && g_parryPose > 0.0f && mode != SWAP && mode != TWIN && mode != LEFTY
+            && s.reacting != arms::REACT_DOWN)
         {
             float env = parryEnvelope(defense::frameMs() - s.parryStart);
             if (env > 0.0f)
@@ -1542,12 +1631,14 @@ namespace
 
     void updateTransforms_hook(Ogre::Skeleton* self)
     {
+        diag::HookCall hc(diag::HK_UPDATE_TRANSFORMS);
         if (g_count > 0)
         {
             EnterCriticalSection(&g_lock);
             std::map<Ogre::Skeleton*, State>::iterator it = g_states.find(self);
             if (it != g_states.end())
             {
+                hc.ours();
                 LARGE_INTEGER t0, t1;
                 QueryPerformanceCounter(&t0);
                 apply(self, it->second);
@@ -1580,7 +1671,9 @@ namespace
         s.written = s.tgt = s.from = s.out = s.guard = s.src;
         s.srcP.assign(n, Ogre::Vector3::ZERO);
         s.writtenP = s.tgtP = s.fromP = s.outP = s.guardP = s.srcP;
-        s.lastT.QuadPart = 0;
+        s.lastMs = -1.0;
+        s.reacting = arms::REACT_NONE;
+        s.appliedReacting = arms::REACT_NONE;
         s.hangT = -1.0;
         s.parryStart = -1.0;
         s.snapCount = s.snapNext = 0;
@@ -1786,7 +1879,7 @@ namespace arms
             return false;
         }
 
-        if (KenshiLib::AddHook(reinterpret_cast<void*>(target), reinterpret_cast<void*>(updateTransforms_hook),
+        if (hooks::add("Ogre::Skeleton::_updateTransforms", "pose", reinterpret_cast<void*>(target), reinterpret_cast<void*>(updateTransforms_hook),
                                reinterpret_cast<void**>(&updateTransforms_orig)) != KenshiLib::SUCCESS)
         {
             kit::log::error("Nitoryu: could not hook Ogre::Skeleton::_updateTransforms");
@@ -1997,6 +2090,17 @@ namespace arms
     void setOffBlockStyle(int style) { g_offBlockStyle = style; }
 
     void setAngledSwap(bool on) { g_angledSwap = on; }
+
+    void setReacting(Character* c, int level)
+    {
+        if (g_count == 0 || c == NULL)
+            return;
+        EnterCriticalSection(&g_lock);
+        State* s = stateOf(c);
+        if (s != NULL)
+            s->reacting = level;
+        LeaveCriticalSection(&g_lock);
+    }
     void setLimpSwing(bool on) { g_limpSwing = on; }
 
     void setAttackClip(Character* c, int k, float progress01)
@@ -2076,6 +2180,7 @@ namespace arms
             s.moving = in.moving;
             s.foreign = in.foreign;
             s.rank = in.rank;
+            s.reacting = in.reacting;
 
             if (k >= 0)
                 loadL3Files();
@@ -2089,7 +2194,11 @@ namespace arms
                 s.parryStart = in.parryStart;
                 s.parrySnap = s.snapCount > 0 ? (int)((unsigned)(in.parryStart / 7.0) % (unsigned)s.snapCount) : -1;
                 diag::count(s.parrySnap >= 0 ? "arms_parry_block_pose" : "arms_parry_swing");
-                int pk = parryClip();
+                int pk = in.parryBack ? backGuardClip(false, in.blockDir) : -1;
+                if (pk >= 0)
+                    diag::count("back_guard_second_blade");
+                else
+                    pk = parryClip();
                 if (pk >= 0)
                     startClip(s, pk, in.parryStart);
             }
@@ -2098,7 +2207,14 @@ namespace arms
             {
                 s.blockHitStart = in.blockHitStart;
 
-                if (s.blockKind == CLIP_ANGLED_L && g_clipOn[CLIP_ANGLED_L_IMPACT])
+                int bk = in.blockHitBack ? backGuardClip(true, in.blockDir) : -1;
+                if (bk >= 0)
+                {
+                    diag::count("back_guard_main_blade");
+                    startClip(s, bk, in.blockHitStart);
+                }
+
+                else if (s.blockKind == CLIP_ANGLED_L && g_clipOn[CLIP_ANGLED_L_IMPACT])
                     startClip(s, CLIP_ANGLED_L_IMPACT, in.blockHitStart);
                 else if (s.blockKind == CLIP_ANGLED_R && g_clipOn[CLIP_ANGLED_R_IMPACT])
                     startClip(s, CLIP_ANGLED_R_IMPACT, in.blockHitStart);
@@ -2155,14 +2271,12 @@ namespace arms
         EnterCriticalSection(&g_lock);
         State* s = stateOf(c);
 
-        if (s != NULL && (s->mode == BLOCK || (s->clip >= 0 && blockClip(s->clip))) && s->blockKind >= 0
-            && g_clipOn[CLIP_BROKEN_SCISSOR])
+        if (s != NULL && (s->mode == BLOCK || (s->clip >= 0 && blockClip(s->clip))) && s->blockKind >= 0)
         {
-            int k = s->blockKind == CLIP_ANGLED_L ? (int)CLIP_BROKEN_ANGLED_L
-                  : s->blockKind == CLIP_ANGLED_R ? (int)CLIP_BROKEN_ANGLED_R : (int)CLIP_BROKEN_SCISSOR;
-            startClip(*s, k, defense::frameMs());
             s->blockKind = -1;
-            diag::count("l3_guard_broken");
+            if (s->clip >= 0)
+                s->clipHit = true;
+            diag::count("l3_block_hit_through");
         }
 
         else if (s != NULL && s->mode != BLOCK && g_clipOn[CLIP_HIT_TAKEN] && !c->isDown() && !c->isUnconcious()

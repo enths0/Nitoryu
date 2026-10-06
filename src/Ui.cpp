@@ -21,6 +21,7 @@
 #include "Lang.h"
 #include "Diagnostics.h"
 #include "kit/diag.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -33,6 +34,7 @@ namespace
     const char* const ANY_PREFIX = "Nitoryu_any_";
     const char* const ICON_ANY_ON = "Nitoryu_any_weapon.png";
     const char* const ICON_ANY_OFF = "Nitoryu_any_weapon_off.png";
+    const int BUTTON_DEPTH = -1;
 
     bool g_enabled = true;
     bool g_anyEnabled = true;
@@ -118,7 +120,18 @@ namespace
 
     void ensureButton(InventoryGUI* gui, InventorySection* section);
 
-    void onAnyClick(MyGUI::Widget* sender)
+    bool g_uiFailed = false;
+
+    void uiFault(const char* where, const char* what)
+    {
+        diag::count("ui_exception");
+        if (g_uiFailed)
+            return;
+        g_uiFailed = true;
+        feedback::featureOff("ui", (std::string(where) + ": " + (what != NULL ? what : "?")).c_str());
+    }
+
+    void onAnyClickBody(MyGUI::Widget* sender)
     {
         std::map<MyGUI::Widget*, InventoryGUI*>::iterator t = g_buttons.find(sender);
         Character* c = clicked(sender);
@@ -136,7 +149,7 @@ namespace
             ensureButton(t->second, back);
     }
 
-    void onClick(MyGUI::Widget* sender)
+    void onClickBody(MyGUI::Widget* sender)
     {
         Character* c = clicked(sender);
         if (c == NULL)
@@ -147,6 +160,24 @@ namespace
         feedback::say(c, lang::text(on ? "speech.two_blades" : "speech.one_blade").c_str(), 0);
         diag::count(on ? "ui_toggle_on" : "ui_toggle_off");
         kit::Diag("toggle").kv("who", c->displayName).kv("dual_allowed", on).kv("from", "button").emit();
+    }
+
+    void onClick(MyGUI::Widget* sender)
+    {
+        if (g_uiFailed)
+            return;
+        try { onClickBody(sender); }
+        catch (const std::exception& e) { uiFault("stance button click", e.what()); }
+        catch (...) { uiFault("stance button click", "unknown exception"); }
+    }
+
+    void onAnyClick(MyGUI::Widget* sender)
+    {
+        if (g_uiFailed)
+            return;
+        try { onAnyClickBody(sender); }
+        catch (const std::exception& e) { uiFault("any-weapon button click", e.what()); }
+        catch (...) { uiFault("any-weapon button click", "unknown exception"); }
     }
 
     void ensureOne(InventoryGUI* gui, MyGUI::Widget* parent, const char* prefix, int slot, bool show, const char* texture,
@@ -175,6 +206,12 @@ namespace
                                                                           MyGUI::Align::Stretch, std::string(name) + "_icon");
             icon->setNeedMouseFocus(false);
             diag::count("ui_button_created");
+        }
+
+        if (button->getDepth() != BUTTON_DEPTH)
+        {
+            button->setDepth(BUTTON_DEPTH);
+            diag::count("ui_button_raised");
         }
         g_buttons[button] = gui;
         button->setVisible(show);
@@ -210,9 +247,15 @@ namespace
     void (*refreshSection_orig)(InventoryGUI*, InventorySection*) = NULL;
     void refreshSection_hook(InventoryGUI* self, InventorySection* section)
     {
+        diag::HookCall hc(diag::HK_REFRESH_SECTION);
         refreshSection_orig(self, section);
-        if (g_enabled && self != NULL && section != NULL)
-            ensureButton(self, section);
+        if (g_enabled && !g_uiFailed && self != NULL && section != NULL)
+        {
+            hc.ours();
+            try { ensureButton(self, section); }
+            catch (const std::exception& e) { uiFault("inventory button", e.what()); }
+            catch (...) { uiFault("inventory button", "unknown exception"); }
+        }
     }
 
     bool tipAlive()
@@ -220,7 +263,13 @@ namespace
         MyGUI::EnumeratorWidgetPtr e = MyGUI::Gui::getInstance().getEnumerator();
         while (e.next())
             if (e.current() == g_tip)
-                return true;
+            {
+
+                if (g_tip->getName() == TIP_NAME)
+                    return true;
+                diag::count("ui_widget_address_reused");
+                return false;
+            }
         return false;
     }
 
@@ -278,7 +327,7 @@ namespace
     {
         static bool hook()
         {
-            return KenshiLib::AddHook(KenshiLib::GetRealAddress(&InventoryGUIAccess::_NV_refreshSection),
+            return hooks::add("InventoryGUI::refreshSection", "ui", KenshiLib::GetRealAddress(&InventoryGUIAccess::_NV_refreshSection),
                                       refreshSection_hook, &refreshSection_orig) == KenshiLib::SUCCESS;
         }
     };

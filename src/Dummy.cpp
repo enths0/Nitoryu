@@ -22,6 +22,7 @@
 #include "Stance.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -35,12 +36,14 @@ namespace
     void (*xpTraining_orig)(CharStats*, float, float, float&, float, StatsEnumerated) = NULL;
     void xpTraining_hook(CharStats* self, float time, float mult, float& stat, float upperLimit, StatsEnumerated which)
     {
+        diag::HookCall hc(diag::HK_XP_TRAINING);
         Character* c = t_trainee;
         if (c == NULL || self == NULL || self != c->getStats())
         {
             xpTraining_orig(self, time, mult, stat, upperLimit, which);
             return;
         }
+        hc.ours();
         if (!stance::hasPair(c))
         {
             diag::count("dummy_no_pair");
@@ -72,12 +75,14 @@ namespace
     void (*operate_orig)(UseableStuff*, Character*, float) = NULL;
     void operate_hook(UseableStuff* self, Character* who, float t)
     {
+        diag::HookCall hc(diag::HK_OPERATE);
         if (!g_enabled || !g_on || self == NULL || who == NULL || self->specialFunction != BF_TRAINING
             || !kit::fcsBool(self->getGameData(), "nitoryu pair dummy", false))
         {
             operate_orig(self, who, t);
             return;
         }
+        hc.ours();
         Character* prev = t_trainee;
         t_trainee = who;
         operate_orig(self, who, t);
@@ -144,12 +149,12 @@ namespace dummy
     bool installHooks()
     {
         applySettings();
-        bool ok = KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::xpTraining), xpTraining_hook,
+        bool ok = hooks::add("CharStats::xpTraining", "dummy", KenshiLib::GetRealAddress(&CharStats::xpTraining), xpTraining_hook,
                                      &xpTraining_orig) == KenshiLib::SUCCESS;
         if (!ok)
             kit::log::error("Nitoryu: could not hook CharStats::xpTraining");
 
-        ok = ok && KenshiLib::AddHook(KenshiLib::GetRealAddress(&UseableStuff::_NV_operate), operate_hook,
+        ok = ok && hooks::add("UseableStuff::operate", "dummy", KenshiLib::GetRealAddress(&UseableStuff::_NV_operate), operate_hook,
                                       &operate_orig) == KenshiLib::SUCCESS;
         if (!ok)
             kit::log::error("Nitoryu: could not hook UseableStuff::operate; the pair dummy trains nothing");

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 class Character;
 
 namespace feedback
@@ -12,4 +14,6 @@ namespace feedback
     void announce(Character* c, const char* text);
     void flush();
     void forget(Character* c);
+
+    void featureOff(const char* feature, const char* why);
 }

@@ -32,9 +32,12 @@
 #include "Mastery.h"
 #include "Pressure.h"
 #include "Settings.h"
+#include "Stance.h"
+#include "Ambidex.h"
 #include "Ui.h"
 #include "Diagnostics.h"
 #include "kit/diag.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -306,9 +309,11 @@ namespace
     void (*cellUpdate_orig)(PortraitMainCellView*, const MyGUI::IBDrawItemInfo&, PortraitData*) = NULL;
     void cellUpdate_hook(PortraitMainCellView* self, const MyGUI::IBDrawItemInfo& info, PortraitData* data)
     {
+        diag::HookCall hc(diag::HK_CELL_UPDATE);
         cellUpdate_orig(self, info, data);
         if (g_failed || self == NULL || data == NULL)
             return;
+        hc.ours();
         try
         {
             paintCell(self, data);
@@ -331,18 +336,23 @@ namespace
     MyGUI::TextBox* g_tip = NULL;
     int g_tipKind = -1;
 
-    bool alive(MyGUI::Widget* w)
+    bool alive(MyGUI::Widget* w, const char* name)
     {
         if (w == NULL)
             return false;
         MyGUI::EnumeratorWidgetPtr e = MyGUI::Gui::getInstance().getEnumerator();
         while (e.next())
             if (e.current() == w)
-                return true;
+            {
+                if (w->getName() == name)
+                    return true;
+                diag::count("hud_widget_address_reused");
+                return false;
+            }
         return false;
     }
 
-    bool rootAlive() { return alive(g_root); }
+    bool rootAlive() { return alive(g_root, ROOT_NAME); }
 
     void headHot(int kind, int x, int y, int w, int h)
     {
@@ -661,12 +671,11 @@ namespace hud
         g_size = size < 8 ? 8 : (size > 64 ? 64 : size);
         g_height = cfg::f(cfg::HUD_HEIGHT);
         g_onName = cfg::b(cfg::HUD_ON_NAME);
-        g_tips = cfg::b(cfg::HUD_TIPS);
-    }
+        g_tips = cfg::b(cfg::HUD_TIPS);    }
 
     bool installHooks()
     {
-        g_cellHook = KenshiLib::AddHook(KenshiLib::GetRealAddress(&PortraitMainCellView::update), cellUpdate_hook, &cellUpdate_orig)
+        g_cellHook = hooks::add("PortraitMainCellView::update", "marks", KenshiLib::GetRealAddress(&PortraitMainCellView::update), cellUpdate_hook, &cellUpdate_orig)
                      == KenshiLib::SUCCESS;
         if (!g_cellHook)
             kit::log::error("Nitoryu: could not hook PortraitMainCellView::update (no marks on the portraits; [Marks] place=2 shows them above the heads)");
@@ -687,7 +696,7 @@ namespace hud
                 g_root = NULL;
                 g_images.clear();
             }
-            if (g_tip != NULL && !alive(g_tip))
+            if (g_tip != NULL && !alive(g_tip, TIP_NAME))
                 g_tip = NULL;
             if (!g_live || g_scope == 0)
             {

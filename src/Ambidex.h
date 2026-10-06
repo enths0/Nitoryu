@@ -30,6 +30,7 @@ namespace ambidex
         float a, eff;
         float overload;
         float overloadMult, armourMult;
+        int armourPieces;
     };
     Effective effective(Character* c);
 

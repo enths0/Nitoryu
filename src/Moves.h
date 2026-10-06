@@ -85,7 +85,11 @@ namespace moves
 
     inline bool twinClip(int clip)
     {
-        return clip == arms::CLIP_DASH || clip == arms::CLIP_TWIN_SWEEP || clip == arms::CLIP_SPIN;
+        return clip == arms::CLIP_DASH || clip == arms::CLIP_TWIN_SWEEP || clip == arms::CLIP_SPIN
+
+            || clip == arms::CLIP_FAN_SWEEP || clip == arms::CLIP_HEAD_WRAP
+
+            || clip == arms::CLIP_FIGURE_EIGHT || clip == arms::CLIP_THREE_CUTS;
     }
 
     inline bool longTail(int clip) { return clip == arms::CLIP_DASH || clip == arms::CLIP_SPIN; }
@@ -126,7 +130,7 @@ namespace moves
         { 6,  "nitoryu-twin-overhead",       "", NULL,                 { TWIN,   0, -1, false, false, 1.0f, 0.0, 0.0f, 0.0f } },
         { 7,  "nitoryu-cross-slash",         "", NULL,                 { TWIN,   0, -1, false, false, 1.0f, 0.0, 0.0f, 0.0f } },
         { 9,  "nitoryu-cross-finisher",      "cross", NULL,
-          { FINISHER, 0, arms::CLIP_CROSS, false, false, tuning::CROSS_CHANCE, tuning::CROSS_COOLDOWN_MS, 0.0f, 0.0f } },
+          { FINISHER, 0, arms::CLIP_X_CUT, false, false, tuning::CROSS_CHANCE, tuning::CROSS_COOLDOWN_MS, 0.0f, 0.0f } },
         { 10, "nitoryu-dash-slash",          "dash", NULL,
           { OPENER, 0, arms::CLIP_DASH, false, false, tuning::DASH_CHANCE, tuning::DASH_COOLDOWN_MS, tuning::DASH_MIN_GAP,
             tuning::DASH_DISTANCE } },

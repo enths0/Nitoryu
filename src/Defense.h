@@ -46,5 +46,8 @@ namespace defense
     double lastParryMs(Character* c);
 
     double lastMainBlockMs(Character* c);
+
+    bool lastParryBack(Character* c);
+    bool lastMainBlockBack(Character* c);
     void forget(Character* c);
 }

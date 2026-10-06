@@ -30,6 +30,7 @@
 #include "Diagnostics.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -66,6 +67,7 @@ namespace
         double lastBlockedT;
         double lastParryT;
         double mainBlockT;
+        bool parryBack, mainBlockBack;
         double counterT;
         double seenT;
     };
@@ -220,6 +222,7 @@ namespace
             d.lastBlockedT = -1e18;
             d.lastParryT = -1e18;
             d.mainBlockT = -1e18;
+            d.parryBack = d.mainBlockBack = false;
             d.counterT = -1.0;
             it = g_def.insert(std::make_pair(c, d)).first;
         }
@@ -267,6 +270,7 @@ namespace
     bool (*initBlock_orig)(CombatClass*, bool) = NULL;
     bool initBlock_hook(CombatClass* self, bool isStumbling)
     {
+        diag::HookCall hc(diag::HK_INIT_BLOCK);
         bool r = initBlock_orig(self, isStumbling);
         if (!g_enabled || !g_guardOn || self == NULL || self->me == NULL)
             return r;
@@ -283,6 +287,7 @@ namespace
         stance::Info s = stance::evaluate(self->me, NULL);
         if (!s.dual || s.tier < cfg::i(cfg::GUARD_MIN_TIER))
             return r;
+        hc.ours();
         diag::count(self->blockingTarget != NULL ? "guard_foe_captured" : "guard_foe_captured_h");
         Lock l;
         double now = advanceClock();
@@ -293,7 +298,7 @@ namespace
     }
 
     HitMaterialType (*iHit_orig)(CombatClass*, CutDirection, Damages&, Character*) = NULL;
-    HitMaterialType offHandGuard(CombatClass* self, CutDirection dir, Damages& damage, Character* who)
+    HitMaterialType offHandGuard(CombatClass* self, CutDirection dir, Damages& damage, Character* who, bool& ours)
     {
         HitMaterialType r = iHit_orig(self, dir, damage, who);
         if (!g_enabled || self == NULL || who == NULL || self->me == NULL || who == self->me)
@@ -302,12 +307,17 @@ namespace
         stance::Info s = stance::evaluate(me, NULL);
         if (!s.dual)
             return r;
+        ours = true;
 
         bool haveCtx = t_victim == me && t_attacker == who;
         CombatTechniqueData* tech = haveCtx ? t_attack : NULL;
         int combo = haveCtx ? t_combo : -1;
         if (!haveCtx)
             diag::count("guard_no_context");
+
+        float facingDot = 2.0f;
+        const bool behind = !inArc(me, who, facingDot);
+        const bool backRank = s.tier >= cfg::i(cfg::BACK_GUARD_MIN_TIER);
 
         bool comboHit = false;
         hand foeH;
@@ -340,6 +350,9 @@ namespace
                 d.lastBlocked = who->getHandle();
                 d.lastBlockedT = now;
                 d.mainBlockT = now;
+                d.mainBlockBack = behind && backRank;
+                if (d.mainBlockBack)
+                    diag::count("guard_main_block_back");
                 armCounter(d, s.tier, now);
                 diag::count("guard_main_block");
                 return r;
@@ -380,13 +393,14 @@ namespace
             return r;
         }
 
-        float facingDot = 2.0f;
-        if (!inArc(me, who, facingDot))
+        if (behind && !backRank)
         {
             diag::count("guard_behind");
             return r;
         }
-        bool group = foe != NULL && who != foe;
+        if (behind)
+            diag::count("guard_back_try");
+        bool group = behind || (foe != NULL && who != foe);
 
         bool mainFoe = !comboHit && !group && s.tier >= cfg::i(cfg::MAIN_GUARD_MIN_TIER);
         if (!comboHit && !group && !mainFoe)
@@ -396,7 +410,7 @@ namespace
         }
         if (group && foeFallback)
             diag::count("guard_foe_fallback");
-        const char* trigger = group ? "group" : comboHit ? "combo" : "main";
+        const char* trigger = behind ? "back" : group ? "group" : comboHit ? "combo" : "main";
         diag::count(group ? "guard_group_try" : comboHit ? "guard_combo_try" : "guard_main_try");
         if (sinceParry < g_cooldownMs)
         {
@@ -423,6 +437,8 @@ namespace
             diag::count("pair_long_short_parry_roll");
         }
         float share = group ? 1.0f : comboHit ? cfg::f(cfg::COMBO_GUARD_SHARE) : cfg::f(cfg::MAIN_GUARD_SHARE);
+        if (behind)
+            share *= cfg::f(cfg::BACK_GUARD_SHARE);
         float chance = share * g * bc / baseBc;
         bool ok = roll01() < chance;
         if (ok)
@@ -434,6 +450,9 @@ namespace
             else
             {
                 d.lastParryT = now;
+                d.parryBack = behind;
+                if (behind)
+                    diag::count("guard_back_ok");
                 t_offParry = me;
                 d.lastBlocked = who->getHandle();
                 d.lastBlockedT = now;
@@ -455,7 +474,11 @@ namespace
 
     HitMaterialType iHit_hook(CombatClass* self, CutDirection dir, Damages& damage, Character* who)
     {
-        HitMaterialType r = offHandGuard(self, dir, damage, who);
+        diag::HookCall hc(diag::HK_I_HIT);
+        bool ours = false;
+        HitMaterialType r = offHandGuard(self, dir, damage, who, ours);
+        if (ours)
+            hc.ours();
         if (g_enabled && self != NULL)
         {
             pressure::onImpact(self->me, who, r);
@@ -517,9 +540,9 @@ namespace defense
     bool installHooks()
     {
         bool ok = true;
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CombatClass::_iHitYouAreYouHit), iHit_hook, &iHit_orig),
+        ok &= hook(hooks::add("CombatClass::_iHitYouAreYouHit", "guard", KenshiLib::GetRealAddress(&CombatClass::_iHitYouAreYouHit), iHit_hook, &iHit_orig),
                    "CombatClass::_iHitYouAreYouHit");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CombatClass::initialiseBlock), initBlock_hook, &initBlock_orig),
+        ok &= hook(hooks::add("CombatClass::initialiseBlock", "guard", KenshiLib::GetRealAddress(&CombatClass::initialiseBlock), initBlock_hook, &initBlock_orig),
                    "CombatClass::initialiseBlock");
         char b[160];
 
@@ -616,6 +639,20 @@ namespace defense
         Lock l;
         std::map<Character*, Defender>::iterator it = g_def.find(c);
         return it != g_def.end() && it->second.mainBlockT > -1e17 ? it->second.mainBlockT : -1.0;
+    }
+
+    bool lastParryBack(Character* c)
+    {
+        Lock l;
+        std::map<Character*, Defender>::iterator it = g_def.find(c);
+        return it != g_def.end() && it->second.parryBack;
+    }
+
+    bool lastMainBlockBack(Character* c)
+    {
+        Lock l;
+        std::map<Character*, Defender>::iterator it = g_def.find(c);
+        return it != g_def.end() && it->second.mainBlockBack;
     }
 
     bool takeCounter(Character* c)

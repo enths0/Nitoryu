@@ -22,6 +22,7 @@
 #include <set>
 #include <string>
 
+#include "core/Math.h"
 #include "Stance.h"
 #include "Tuning.h"
 #include "Settings.h"
@@ -136,30 +137,24 @@ namespace
 
     float dpOf(float skillLow, float dex, float atk, float def, float ambiEff)
     {
-        return clamp01x(cfg::f(cfg::W_SKILL) * cap100(skillLow) + cfg::f(cfg::W_DEX) * cap100(dex) + cfg::f(cfg::W_ATTACK) * cap100(atk)
-                        + cfg::f(cfg::W_DEFENCE) * cap100(def) + cfg::f(cfg::W_AMBI) * cap100(ambiEff), 0.0f, 100.0f);
+        core::PathWeights w = { cfg::f(cfg::W_SKILL), cfg::f(cfg::W_DEX), cfg::f(cfg::W_ATTACK), cfg::f(cfg::W_DEFENCE),
+                                cfg::f(cfg::W_AMBI) };
+        return core::pathOf(w, skillLow, dex, atk, def, ambiEff);
     }
 
     float speedFactorOf(float dp, float dex)
     {
-        float full = cfg::f(cfg::SPEED_FULL_DP);
-        float speed0 = cfg::f(cfg::SPEED0);
-        if (dp < full)
-            return speed0 + (1.0f - speed0) * dp / full;
-        float from = cfg::f(cfg::SPEED_FROM);
-        float span = 100.0f - from;
-        if (span <= 0.0f)
-            return 1.0f + g_speedBonus;
-        float dexN = clamp01x((dex - from) / span, 0.0f, 1.0f);
-        float dpN = clamp01x((dp - from) / span, 0.0f, 1.0f);
-        return 1.0f + g_speedBonus * dexN * dpN;
+        return core::speedFactor(dp, dex, cfg::f(cfg::SPEED0), cfg::f(cfg::SPEED_FULL_DP), cfg::f(cfg::SPEED_FROM),
+                                 g_speedBonus);
     }
 
     int capByAmbi(int t, float ambiEff)
     {
-        while (t > 0 && ambiEff < tierMinAmbi(t - 1))
-            --t;
-        return t;
+        float minAmbi[tuning::TIERS];
+        int n = cfg::items(cfg::TIER_MIN_AMBI);
+        for (int i = 0; i < tuning::TIERS; ++i)
+            minAmbi[i] = tierMinAmbi(i);
+        return core::capByAmbi(t, ambiEff, minAmbi, n < tuning::TIERS ? n : tuning::TIERS);
     }
 
     std::string recordIdOf(GameData* d) { return d != NULL ? d->stringID : std::string(); }
@@ -215,8 +210,10 @@ namespace
                 from = FROM[i][1];
                 return cap100(v);
             }
+
+            const std::string id = recs[i]->stringID;
             Lock l;
-            it = g_listPath.find(recs[i]->stringID);
+            it = g_listPath.find(id);
             if (it != g_listPath.end())
             {
                 from = FROM[i][2];
@@ -316,13 +313,14 @@ namespace
         {
             diag::count(pathFrom[0] == 'i' ? "path_authored_ini" : pathFrom[0] == 'l' ? "path_authored_list" : "path_authored_field");
             bool first;
+            const std::string record = recordIdOf(c->getGameData());
             {
                 Lock l;
-                first = g_pathLogged.size() < 24 && g_pathLogged.insert(recordIdOf(c->getGameData())).second;
+                first = g_pathLogged.size() < 24 && g_pathLogged.insert(record).second;
             }
             if (first)
                 kit::Diag("path_authored").kv("who", c->displayName).kv("from", pathFrom).kv("value", pathMin)
-                    .kv("was", r.dp).kv("record", recordIdOf(c->getGameData())).emit();
+                    .kv("was", r.dp).kv("record", record).emit();
             r.dp = pathMin;
         }
         if (g_forceTier > 0)
@@ -351,8 +349,7 @@ namespace
             r.tier = g_forceTier;
         if (r.tier < r.tierByDp)
             diag::count(r.tierCap[0] == 'n' ? "tier_capped_npc" : "tier_capped_ambi");
-        float clumsy = cfg::f(cfg::CLUMSY0) - cfg::f(cfg::CLUMSY_SLOPE) * r.dp;
-        r.clumsy = clumsy > 0.0f ? clumsy : 0.0f;
+        r.clumsy = core::clumsiness(cfg::f(cfg::CLUMSY0), cfg::f(cfg::CLUMSY_SLOPE), r.dp);
         r.guardPenalty = balance::dividedGuard(r.tier);
         r.speedFactor = speedFactorOf(r.dp, r.dex);
         r.dual = true;
@@ -375,7 +372,10 @@ namespace
     bool guarded(void (*fn)(void*), void* ctx)
     {
         __try { fn(ctx); return true; }
-        __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+        __except (GetExceptionCode() == EXCEPTION_STACK_OVERFLOW ? EXCEPTION_CONTINUE_SEARCH : EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
     }
 
     stance::Info computeSafe(Character* c, Weapon* w)
@@ -661,11 +661,11 @@ namespace stance
 
     int tierOf(float dp)
     {
-        int t = 0;
+        float thresholds[tuning::TIERS];
+        int n = cfg::items(cfg::TIER_DP);
         for (int i = 0; i < tuning::TIERS; ++i)
-            if (dp >= tierDp(i))
-                t = i + 1;
-        return t;
+            thresholds[i] = tierDp(i);
+        return core::tierOf(dp, thresholds, n < tuning::TIERS ? n : tuning::TIERS, tuning::TIERS);
     }
 
     StatsEnumerated statFor(WeaponCategory c)

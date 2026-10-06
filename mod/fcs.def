@@ -4,11 +4,11 @@
 
 [CONSTANTS]
 Nitoryu 01 dual proficiency:
-nitoryu dp weight skill: 0.3 "Dual proficiency (DP, 0-100) is a weighted average of five inputs, each capped at 100. This is the weight of the lower of the two weapon skills. The five weights should sum to 1."
-nitoryu dp weight dexterity: 0.2 "Weight of Dexterity in dual proficiency."
+nitoryu dp weight skill: 0.1 "Dual proficiency (DP, 0-100) is a weighted average of five inputs, each capped at 100. This is the weight of the lower of the two weapon skills. The five weights should sum to 1."
+nitoryu dp weight dexterity: 0.1 "Weight of Dexterity in dual proficiency."
 nitoryu dp weight attack: 0.1 "Weight of Melee Attack in dual proficiency."
 nitoryu dp weight defence: 0.1 "Weight of Melee Defence in dual proficiency."
-nitoryu dp weight ambidexterity: 0.3 "Weight of effective Ambidexterity (after overload and armour) in dual proficiency."
+nitoryu dp weight ambidexterity: 0.6 "Weight of effective Ambidexterity (after overload and armour) in dual proficiency."
 nitoryu tier dp: "20,40,60,75,90" "Five numbers: the DP a fighter needs for tiers T1..T5. Moves and mechanics unlock per tier."
 nitoryu tier min ambidexterity: "0,0,40,60,80" "Five numbers: the effective Ambidexterity a fighter also needs for tiers T1..T5."
 nitoryu ambidexterity seed: 0.25 "A character with no saved Ambidexterity starts at this share of its best weapon skill."
@@ -28,8 +28,9 @@ Nitoryu 03 penalties:
 nitoryu clumsiness base: 10.0 "Clumsiness: Melee Attack and Defence points lost at DP 0 (base - slope x DP, never below 0)."
 nitoryu clumsiness slope: 0.25 "Clumsiness points regained per point of DP."
 nitoryu overload floor: 0.2 "Carrying over capacity lowers effective Ambidexterity; it never falls below this factor."
-nitoryu armour penalty: 2.0 "Heavy armour: effective Ambidexterity loses this x the shortfall of the combat speed multiplier below 1."
-nitoryu armour floor: 0.3 "The armour factor on Ambidexterity never falls below this."
+nitoryu armour heavy cut: 0.07 "Each worn armour piece of class heavy lowers effective Ambidexterity by this share (0.07 = 7 percent); the pieces add up. The field nitoryu dual wielding cut on an ARMOUR record overrides it for that piece."
+nitoryu armour medium cut: 0.04 "Each worn armour piece of class medium lowers effective Ambidexterity by this share. Light armour and clothing cut nothing unless their record sets nitoryu dual wielding cut."
+nitoryu armour floor: 0.3 "The armour factor on Ambidexterity (1 minus the worn pieces' cuts) never falls below this."
 nitoryu off weapon bonus share: 0.5 "The second weapon adds this share of its own attack, defence and indoor bonuses."
 Nitoryu 04 speed:
 nitoryu speed at dp 0: 0.85 "Attack and block speed factor of a beginner at DP 0; it rises to 1 at the full-speed DP."
@@ -46,6 +47,8 @@ nitoryu guard arc deg: 110 "The second blade parries only attackers within this 
 nitoryu guard share combo: 0.5 "Share of the guard chance against a later hit of an attacker's combo."
 nitoryu guard share main: 0.5 "Share of the guard chance against the first hit of the enemy the main blade faces."
 nitoryu guard main min tier: 3 "Tier from which the second blade also parries the first hit of the enemy the main blade faces."
+nitoryu back guard min tier: 3 "Tier from which a blade guards the back: the second blade may parry an attacker outside the guard arc, and a hit from behind that the main blade blocked shows the back guard. 6 = never."
+nitoryu back guard share: 0.5 "Share of the guard chance against an attacker behind the fighter (outside the guard arc)."
 nitoryu counter: True "The first attack after a successful block may be an off-hand riposte."
 nitoryu counter min tier: 3 "Tier from which ripostes happen."
 nitoryu counter window ms: 1500 "How long after the block the riposte may start, in milliseconds of game time."
@@ -62,6 +65,8 @@ Nitoryu 07 moves:
 nitoryu special min ambidexterity: 50.0 "Effective Ambidexterity needed for the special moves (with tier 3)."
 nitoryu double hit cooldown ms: 5000 "After a move that hits with both blades the next one waits this many milliseconds of game time. 0 = no cooldown."
 nitoryu no repeat: True "The second blade does not use the same move twice in a row when another one fits."
+nitoryu even picks: True "Of the second blade's moves that come up for a pick, the fighter takes the one it has used least, so every move is seen about as often. Off: the first that comes up, by the game's own weights."
+nitoryu cross riposte chance: 0.25 "Chance that the answer to a block or a parry is the X cut (the riposte finisher); otherwise it is an ordinary riposte."
 nitoryu off hand carry: True "A second-blade turn that found no move in reach waits for the next attack instead of being lost."
 nitoryu off hand carry ms: 3000 "How long such a turn waits, in milliseconds of game time."
 nitoryu far pick gap: 35.0 "An attack picked from farther than this beyond the fighter's reach is left to the game."
@@ -142,6 +147,9 @@ nitoryu marks on name: True "Above the heads: the marks sit right on top of the 
 nitoryu marks tips: False "The mouse over a mark shows the skill's name and what it does."
 Nitoryu 16 stats window:
 nitoryu stats line group: 1 "Where the Dual Wielding line sits in the character's stats window: 1 = at the end of the Weapons group; 2 = in the Combat group, after its last skill (the Ranged group moves down a row)."
+Nitoryu 17 animations:
+nitoryu run hold free weight: 0.5 "The two-blade run draws the arms and the torso over the legs of the run that is playing. When it cannot keep in step with that run (another mod's run animation), the torso takes only this share of the pose, 0-1: 0 = the torso is left to the other run, 1 = fully ours. The arms always take it in full."
+nitoryu yield to reactions: True "While the game plays a stagger, a knockdown, a knockout or a get-up on a dual fighter, the dual pose steps aside and that animation shows, the game's own or another mod's. Off: the dual pose stays on the upper body through it."
 
 // Nitoryu's fields on record types other than CONSTANTS. Hand-written; the settings generator appends this file
 // to the generated [CONSTANTS] block of mod/fcs.def. The grammar is the game's own fcs.def.
@@ -156,6 +164,11 @@ nitoryu dual wield: 0 "This weapon in a two-weapon pair. 0 = by its category (th
 nitoryu off hand damage: 1.0 "Multiplier on this weapon's damage when it strikes as the second blade (on top of the off-hand damage curve). 1 = none."
 nitoryu dual wielding xp: 1.0 "Multiplier on the Dual Wielding XP a fighter gains while this weapon is in its pair (both weapons' values multiply). 1 = none; above 1 = a training weapon."
 nitoryu pair length: 0.0 "The blade length Nitoryu reads to tell what pair this weapon makes (long + short, or equal blades). 0 = the weapon's own length."
+
+// 1.0.5: worn armour lowers Dual Wielding per piece (docs/BALANCE.md section 6).
+[ARMOUR]
+Nitoryu:
+nitoryu dual wielding cut: -1.0 "Share of Dual Wielding (as it counts in a fight) this piece takes away while worn, 0-1; the worn pieces add up. -1 = by its class: heavy = the setting nitoryu armour heavy cut (0.07), medium = nitoryu armour medium cut (0.04), light and clothing 0. 0 = this piece never cuts it."
 
 // 0.42: a training building for Dual Wielding (docs/FCS.md, "The pair dummy").
 [BUILDING]
@@ -179,7 +192,7 @@ nitoryu rig: 0 "How Nitoryu treats this race's skeleton. 0 = automatic: the seco
 Nitoryu:
 nitoryu move: 0 "0 = not a Nitoryu move. 1 = a strike of the second blade. 2 = a twin strike (both blades in one swing). 3 = a finisher (special: on a staggering or fully pressured enemy, or right after the fighter blocked). 4 = an opener (special: from a distance). Needs animal = ATTACK_NULL and every weapon flag off; min skill is the dual proficiency needed; chance is its weight, and among finishers or openers the higher chance goes first."
 nitoryu arms: 0 "How the track is played. 0 = by the move: a strike is mirrored to the left hand, the others play on both blades. 1 = mirrored to the left hand (the right blade keeps its guard). 2 = both blades (the left arm mirrors the right). 3 = main hand only (the left arm keeps its guard)."
-nitoryu clip: "" "One of Nitoryu's own animations laid over the track while the move plays: cross_finisher, dash_slash, spin, off_rising_cut, twin_sweep, one_two, off_backhand, beat_cut, double_chop. Empty = none (the track alone, mirrored or on both blades)."
+nitoryu clip: "" "One of Nitoryu's own animations laid over the track while the move plays: x_cut, dash_slash, spin, off_rising_cut, twin_sweep, one_two, off_backhand, beat_cut, double_chop, off_leg_cut, fan_sweep, head_wrap, dual_cut, off_hand_cut, main_hand_cut, figure_eight, three_cuts. Empty = none (the track alone, mirrored or on both blades)."
 nitoryu needs clip: False "True = the move is not used while its clip is switched off in Nitoryu.ini [Animations]."
 nitoryu echo: False "True = every impact of the move is followed by a hit of the second blade (two impacts = four hits). For a move whose track swings both blades together; leave it off when the record already has a left-arm impact (limb = 0)."
 nitoryu cooldown ms: 0 "Finisher or opener: a fighter uses this move at most once per this many milliseconds of game time."

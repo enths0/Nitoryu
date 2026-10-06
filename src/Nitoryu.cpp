@@ -31,57 +31,24 @@
 #include "Ambidex.h"
 #include "Lefty.h"
 #include "Foreign.h"
+#include "SoundTrace.h"
 #include "Lang.h"
 #include "Ui.h"
 #include "Hud.h"
 #include "Balance.h"
 #include "Settings.h"
 #include "kit/diag.h"
+#include "Hooks.h"
 
 namespace
 {
-    const char* VERSION = "1.0.4";
+    const char* VERSION = "1.0.5";
 
     const DWORD COUNTS_STAGE_MS = 30000;
-    const DWORD COUNTS_PROD_MS = 600000;
+    const DWORD COUNTS_PROD_MS = 120000;
     const DWORD CONSTANTS_EVERY_MS = 30000;
     DWORD g_lastConstants = 0;
     const unsigned PRUNE_AFTER_MS = 60000;
-
-    int g_sharedHooks = 0;
-
-    void checkShared(intptr_t target, const char* name)
-    {
-        const unsigned char* p = reinterpret_cast<const unsigned char*>(target);
-        if (p == NULL || IsBadReadPtr(p, 2))
-            return;
-        if (p[0] == 0xE9 || (p[0] == 0xFF && p[1] == 0x25))
-        {
-            ++g_sharedHooks;
-            kit::Diag("shared_hook").kv("target", name).kv("first_byte", (int)p[0]).emit();
-        }
-    }
-
-    void checkSharedHooks()
-    {
-        checkShared(KenshiLib::GetRealAddress(&CharStats::setWeapon), "CharStats::setWeapon");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::_calculateWeaponWeightSpeedMultiplier), "CharStats::_calculateWeaponWeightSpeedMultiplier");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::calculateAttackOrBlockSpeed), "CharStats::calculateAttackOrBlockSpeed");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::getMeleeAttack), "CharStats::getMeleeAttack");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::_calculateBlockChance), "CharStats::_calculateBlockChance");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::_NV_getEquippedWeaponSkill), "CharStats::getEquippedWeaponSkill");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::chooseAttack), "CharStats::chooseAttack");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::serialise), "CharStats::serialise");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::updateStats), "CharStats::updateStats");
-        checkShared(KenshiLib::GetRealAddress(&CharStats::xpMelee), "CharStats::xpMelee");
-        checkShared(KenshiLib::GetRealAddress(&Character::_NV_hitByMeleeAttack), "Character::hitByMeleeAttack");
-        checkShared(KenshiLib::GetRealAddress(&Character::_DESTRUCTOR), "Character::~Character");
-        checkShared(KenshiLib::GetRealAddress(&CombatClass::_iHitYouAreYouHit), "CombatClass::_iHitYouAreYouHit");
-        checkShared(KenshiLib::GetRealAddress(&CombatClass::initialiseBlock), "CombatClass::initialiseBlock");
-        checkShared(KenshiLib::GetRealAddress(&CombatClassAI::_NV_whoAttacksYouOrMe), "CombatClassAI::whoAttacksYouOrMe");
-        checkShared(KenshiLib::GetRealAddress(&CombatTechniqueData::_CONSTRUCTOR), "CombatTechniqueData::CombatTechniqueData");
-        checkShared(KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff), "GameWorld::mainLoop_GPUSensitiveStuff");
-    }
 
     DWORD g_startTick = 0;
     bool g_compatDone = false;
@@ -94,7 +61,7 @@ namespace
         KenshiLib::BinaryVersion v = KenshiLib::GetKenshiVersion();
         kit::Diag("compat").kv("platform", v.GetPlatform() == KenshiLib::BinaryVersion::STEAM ? "steam" : "other")
             .kv("version", v.GetVersion()).kv("layout", stance::knownLayout())
-            .kv("shared_hooks", g_sharedHooks).kv("rigs_unsupported", arms::unsupportedCount())
+            .kv("shared_hooks", hooks::sharedCount()).kv("rigs_unsupported", arms::unsupportedCount())
             .kv("base_tracks_missing", combat::missingTrackCount()).emit();
     }
 
@@ -115,6 +82,27 @@ namespace
         size_t plus = s.find_last_of('+');
         std::string key = plus == std::string::npos ? s : s.substr(plus + 1);
         g_hotKey = key.size() == 1 && isalnum((unsigned char)key[0]) ? toupper((unsigned char)key[0]) : 0;
+    }
+
+    std::string versionAfter(const std::string& log, const char* name)
+    {
+        std::string key = std::string(": ") + name + " ";
+        size_t at = log.find(key);
+        if (at == std::string::npos)
+            return "?";
+        at += key.size();
+        size_t end = at;
+        while (end < log.size() && (isdigit((unsigned char)log[end]) || log[end] == '.'))
+            ++end;
+        return end > at ? log.substr(at, end - at) : "?";
+    }
+
+    std::string identityText()
+    {
+        KenshiLib::BinaryVersion v = KenshiLib::GetKenshiVersion();
+        std::string log = GetDebugLog();
+        return " game=" + v.GetVersion() + " platform=" + v.GetPlatformStr() + " kenshilib="
+               + versionAfter(log, "KenshiLib") + " re_kenshi=" + versionAfter(log, "RE_Kenshi") + ".";
     }
 
     std::string hotkeyText()
@@ -174,6 +162,9 @@ namespace
     {
         std::string& to = ok ? on : off;
         to += (to.empty() ? "" : ",") + std::string(name);
+
+        if (!ok && std::string(name).find("(ini)") == std::string::npos)
+            feedback::featureOff(name, "its game hooks could not be installed (see the hook lines above)");
     }
 
     void toggleSelected()
@@ -216,6 +207,21 @@ namespace
 
     void mainLoopWork(GameWorld* self);
 
+    const int TICK_FAULTS_OFF = 10;
+    int g_tickFaults = 0;
+
+    void tickFault(const char* what)
+    {
+        diag::count("tick_exception");
+        if (++g_tickFaults == 1)
+            kit::log::error(std::string("Nitoryu: an error in the per-frame work: ") + (what != NULL ? what : "?"));
+        if (g_tickFaults == TICK_FAULTS_OFF)
+        {
+            allOff();
+            feedback::featureOff("all features", "repeated errors in the per-frame work; the mod is off for this session");
+        }
+    }
+
     void mainLoop_hook(GameWorld* self, float time)
     {
         kit::log::tick();
@@ -230,7 +236,19 @@ namespace
             ++g_frames;
         }
         g_lastFrame = t0;
-        mainLoopWork(self);
+
+        try
+        {
+            mainLoopWork(self);
+        }
+        catch (const std::exception& e)
+        {
+            tickFault(e.what());
+        }
+        catch (...)
+        {
+            tickFault("unknown exception");
+        }
         LARGE_INTEGER t1;
         QueryPerformanceCounter(&t1);
         g_mainTicks += t1.QuadPart - t0.QuadPart;
@@ -248,6 +266,9 @@ namespace
         if (held && !g_toggleWasHeld && combat::enabled())
             toggleSelected();
         g_toggleWasHeld = held;
+
+        if (ou->player != NULL && ou->player->selectedCharacter.getCharacter() != NULL)
+            hooks::checkOuter();
         feedback::flush();
         compatLine();
         defense::tick();
@@ -284,6 +305,7 @@ namespace
         if (now - g_lastCounts > (diag::stage() ? COUNTS_STAGE_MS : COUNTS_PROD_MS))
         {
             diag::emitCounts();
+            diag::emitHooks();
             combat::emitFight();
             emitCost();
             g_lastCounts = now;
@@ -291,9 +313,8 @@ namespace
     }
 }
 
-__declspec(dllexport) void startPlugin()
+static void startPluginBody()
 {
-    diag::init();
     if (!firstCopy())
     {
         kit::log::error("Nitoryu: another Nitoryu is loaded (a local and a Workshop copy?); this copy stays off.");
@@ -314,14 +335,14 @@ __declspec(dllexport) void startPlugin()
     ambidex::init();
     lefty::init();
     ui::init();
+    soundtrace::init(stance::iniFile());
     hud::init();
     if (probeLoaded())
         kit::log::line("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded too; both hook the same combat functions. If fights misbehave, remove one of them.");
 
     std::string on, off;
-    checkSharedHooks();
     g_startTick = GetTickCount();
-    bool core = KenshiLib::AddHook(KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
+    bool core = hooks::add("GameWorld::mainLoop_GPUSensitiveStuff", "core", KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
                                    mainLoop_hook, &mainLoop_orig) == KenshiLib::SUCCESS;
     if (!core)
         kit::log::error("Nitoryu: could not hook GameWorld::mainLoop_GPUSensitiveStuff");
@@ -380,11 +401,13 @@ __declspec(dllexport) void startPlugin()
         lefty::setEnabled(false);
     feature(on, off, lefty::iniOn() ? "lefty" : "lefty(ini)", left && lefty::iniOn());
 
+    soundtrace::installHooks();
     bool button = ui::installHooks();
     if (!button)
         ui::setEnabled(false);
     feature(on, off, ui::iniOn() ? "ui" : "ui(ini)", button && ui::iniOn());
     feature(on, off, "marks", hud::installHooks());
+    hooks::logSummary();
 
     std::string test;
     if (stance::forcedTier() > 0 || stance::testShareSet())
@@ -404,5 +427,30 @@ __declspec(dllexport) void startPlugin()
         test += std::string(" L3 TEST ON: ") + arms::clipText() + ".";
     kit::log::line(std::string("Nitoryu ") + VERSION + ": loaded. features on=" + on + " off=" + (off.empty() ? "-" : off)
              + ". Weapon categories: " + stance::allowListText() + ". The inventory button toggles the stance (" + hotkeyText() + ")." + test
-             + (feedback::stage() ? " ENV=stage (test speech bubbles on)." : " ENV=prod.") + " diag=" + diag::levelName() + ".");
+             + (feedback::stage() ? " ENV=stage (test speech bubbles on)." : " ENV=prod.") + " diag=" + diag::levelName() + "."
+             + identityText());
+}
+
+__declspec(dllexport) void startPlugin()
+{
+    diag::init();
+    const char* what = NULL;
+    std::string text;
+    try
+    {
+        startPluginBody();
+        return;
+    }
+    catch (const std::exception& e)
+    {
+        text = e.what();
+        what = text.c_str();
+    }
+    catch (...)
+    {
+        what = "unknown exception";
+    }
+    allOff();
+    feedback::featureOff("all features", (std::string("an error while loading: ") + what).c_str());
+    kit::log::line(std::string("Nitoryu ") + VERSION + ": loaded, OFF (an error while loading).");
 }

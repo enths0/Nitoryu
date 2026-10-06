@@ -4,11 +4,14 @@
 #include <kenshi/util/hand.h>
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "Feedback.h"
 #include "Stance.h"
+#include "Diagnostics.h"
+#include "kit/log.h"
 
 namespace
 {
@@ -29,6 +32,20 @@ namespace
         Lock() { EnterCriticalSection(&g_lock); }
         ~Lock() { LeaveCriticalSection(&g_lock); }
     };
+
+    struct NoticeLock
+    {
+        CRITICAL_SECTION cs;
+        NoticeLock() { InitializeCriticalSection(&cs); }
+    } g_noticeLock;
+
+    struct NLock
+    {
+        NLock() { EnterCriticalSection(&g_noticeLock.cs); }
+        ~NLock() { LeaveCriticalSection(&g_noticeLock.cs); }
+    };
+
+    std::set<std::string> g_offSeen;
 }
 
 namespace feedback
@@ -91,5 +108,18 @@ namespace feedback
             if (c != NULL)
                 c->say(lines[i].text);
         }
+    }
+
+    void featureOff(const char* feature, const char* why)
+    {
+        if (feature == NULL)
+            return;
+        {
+            NLock l;
+            if (!g_offSeen.insert(feature).second)
+                return;
+        }
+        kit::log::error(std::string("Nitoryu: ") + feature + " turned off: " + (why != NULL ? why : "?"));
+        diag::count("feature_off_reported");
     }
 }

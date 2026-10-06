@@ -37,6 +37,7 @@
 #include "Ambidex.h"
 #include "Lefty.h"
 #include "Foreign.h"
+#include "SoundTrace.h"
 #include "Moves.h"
 #include "Lang.h"
 #include "Pressure.h"
@@ -44,6 +45,7 @@
 #include "Blades.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
+#include "Hooks.h"
 
 namespace
 {
@@ -199,12 +201,14 @@ namespace
     CombatTechniqueData* (*techCtor_orig)(CombatTechniqueData*, GameData*) = NULL;
     CombatTechniqueData* techCtor_hook(CombatTechniqueData* self, GameData* d)
     {
+        diag::HookCall hc(diag::HK_TECH_CTOR);
         CombatTechniqueData* r = techCtor_orig(self, d);
         EnterCriticalSection(&g_techLock);
         TechRec rec = describe(self, d);
         g_tech[self] = rec;
         if (rec.def.kind != moves::OTHER)
         {
+            hc.ours();
             ++(rec.number > 0 ? g_techOurs : g_techThird);
             if (moves::KINDS[rec.def.kind].special)
             {
@@ -370,12 +374,14 @@ namespace
     void (*setWeapon_orig)(CharStats*, Weapon*) = NULL;
     void setWeapon_hook(CharStats* self, Weapon* w)
     {
+        diag::HookCall hc(diag::HK_SET_WEAPON);
         {
             SetWeaponScope scope(w);
             setWeapon_orig(self, w);
         }
         if (!g_enabled || self == NULL || self->me == NULL)
             return;
+        hc.ours();
         stance::invalidate(self->me);
         if (w == NULL)
         {
@@ -436,9 +442,11 @@ namespace
     void (*weightSpeed_orig)(CharStats*, float) = NULL;
     void weightSpeed_hook(CharStats* self, float weaponWeight)
     {
+        diag::HookCall hc(diag::HK_WEIGHT_SPEED);
         stance::Info s = stanceOf(self);
         if (s.dual)
         {
+            hc.ours();
             diag::count("weight_dual");
             weightSpeed_orig(self, s.weightDual);
             return;
@@ -470,10 +478,12 @@ namespace
 
     float speed_hook(CharStats* self, float weightMult, float skill, bool isBlock)
     {
+        diag::HookCall hc(diag::HK_ATTACK_SPEED);
         float r = speed_orig(self, weightMult, skill, isBlock);
         stance::Info s = stanceOf(self);
         if (s.dual)
         {
+            hc.ours();
             diag::count(isBlock ? "speed_block_dual" : "speed_attack_dual");
 
             float bonus = balance::dexBonus();
@@ -507,26 +517,127 @@ namespace
     float (*meleeAttack_orig)(CharStats*) = NULL;
     float meleeAttack_hook(CharStats* self)
     {
+        diag::HookCall hc(diag::HK_MELEE_ATTACK);
         float r = meleeAttack_orig(self);
         if (!g_enabled || self == NULL || t_inSetWeapon)
             return r;
         stance::Info s = stance::evaluate(self->me, NULL);
         if (s.dual)
+        {
+            hc.ours();
             r += offAttackBonus(s, self->me) - s.clumsy;
+        }
+        return r;
+    }
+
+    __declspec(thread) int t_inPanel = 0;
+    __declspec(thread) int t_inPanelTotal = 0;
+    __declspec(thread) int t_inPanelStance = 0;
+    bool g_panelPair = true;
+
+    struct Depth
+    {
+        explicit Depth(int& n) : n_(n) { ++n_; }
+        ~Depth() { --n_; }
+    private:
+        int& n_;
+        Depth(const Depth&);
+        Depth& operator=(const Depth&);
+    };
+
+    bool panelDual(CharStats* self, stance::Info& s)
+    {
+        if (!g_enabled || !g_panelPair || t_inPanel == 0 || self == NULL || self->me == NULL || t_inSetWeapon)
+            return false;
+
+        if (t_inPanelStance != 0)
+            return false;
+        Depth d(t_inPanelStance);
+        s = stance::evaluate(self->me, NULL);
+        return s.dual;
+    }
+
+    int nearest(float v) { return (int)(v < 0.0f ? v - 0.5f : v + 0.5f); }
+
+    void (*mainInfo_orig)(CharStats*, DatapanelGUI*, int, bool) = NULL;
+    void mainInfo_hook(CharStats* self, DatapanelGUI* panel, int category, bool combatMode)
+    {
+        Depth d(t_inPanel);
+        mainInfo_orig(self, panel, category, combatMode);
+    }
+
+    int (*bonusAttack_orig)(CharStats*, bool) = NULL;
+    int bonusAttack_hook(CharStats* self, bool environment)
+    {
+        int r = bonusAttack_orig(self, environment);
+        stance::Info s;
+        if (t_inPanel != 0 && t_inPanelTotal == 0 && panelDual(self, s))
+        {
+            r += nearest(offAttackBonus(s, self->me));
+            diag::count("panel_attack_bonus");
+        }
+        return r;
+    }
+
+    float (*attackMelee_orig)(CharStats*) = NULL;
+    float attackMelee_hook(CharStats* self)
+    {
+        if (t_inPanel == 0)
+            return attackMelee_orig(self);
+        float r;
+        {
+            Depth d(t_inPanelTotal);
+            r = attackMelee_orig(self);
+        }
+        stance::Info s;
+        if (panelDual(self, s))
+            r += offAttackBonus(s, self->me) - s.clumsy;
+        return r;
+    }
+
+    int (*bonusDefence_orig)(CharStats*, bool) = NULL;
+    int bonusDefence_hook(CharStats* self, bool environment)
+    {
+        int r = bonusDefence_orig(self, environment);
+        stance::Info s;
+        if (t_inPanel != 0 && t_inPanelTotal == 0 && panelDual(self, s))
+        {
+            r += nearest(offDefenceBonus(s, self->me));
+            diag::count("panel_defence_bonus");
+        }
+        return r;
+    }
+
+    float (*defenceMelee_orig)(CharStats*, bool) = NULL;
+    float defenceMelee_hook(CharStats* self, bool defensiveMode)
+    {
+        if (t_inPanel == 0)
+            return defenceMelee_orig(self, defensiveMode);
+        float r;
+        {
+            Depth d(t_inPanelTotal);
+            r = defenceMelee_orig(self, defensiveMode);
+        }
+        stance::Info s;
+        if (panelDual(self, s))
+            r += offDefenceBonus(s, self->me) - s.clumsy - s.guardPenalty;
         return r;
     }
 
     float (*blockChance_orig)(CharStats*, float) = NULL;
     float blockChance_hook(CharStats* self, float versus)
     {
+        diag::HookCall hc(diag::HK_BLOCK_CHANCE);
         stance::Info s = stanceOf(self);
         if (s.dual)
         {
+            hc.ours();
             diag::count("block_chance_dual");
             versus += s.clumsy + s.guardPenalty - offDefenceBonus(s, self->me);
         }
         else if (g_enabled && self != NULL && !t_inSetWeapon && lefty::active(self->me))
         {
+            hc.ours();
             diag::count("lefty_block_chance");
             versus += lefty::blockPenalty(self->me);
         }
@@ -536,9 +647,13 @@ namespace
     float (*equippedSkill_orig)(CharStats*) = NULL;
     float equippedSkill_hook(CharStats* self)
     {
+        diag::HookCall hc(diag::HK_EQUIPPED_SKILL);
 
         if (t_skillOverride >= 0.0f && self == t_overrideFor)
+        {
+            hc.ours();
             return t_skillOverride;
+        }
         return equippedSkill_orig(self);
     }
 
@@ -749,6 +864,44 @@ namespace
         LeaveCriticalSection(&g_pickLock);
     }
 
+    std::map<Character*, std::map<CombatTechniqueData*, unsigned> > g_played;
+
+    void notePlayed(Character* me, CombatTechniqueData* t)
+    {
+        EnterCriticalSection(&g_pickLock);
+        if (g_played.size() > 4096)
+            g_played.clear();
+        ++g_played[me][t];
+        LeaveCriticalSection(&g_pickLock);
+    }
+
+    CombatTechniqueData* leastPlayed(Character* me, CombatTechniqueData** c, int n)
+    {
+        if (n <= 0)
+            return NULL;
+        CombatTechniqueData* best = c[0];
+        unsigned bestN = 0;
+        EnterCriticalSection(&g_pickLock);
+        std::map<Character*, std::map<CombatTechniqueData*, unsigned> >::iterator f = g_played.find(me);
+        for (int i = 0; i < n; ++i)
+        {
+            unsigned used = 0;
+            if (f != g_played.end())
+            {
+                std::map<CombatTechniqueData*, unsigned>::iterator u = f->second.find(c[i]);
+                if (u != f->second.end())
+                    used = u->second;
+            }
+            if (i == 0 || used < bestN)
+            {
+                best = c[i];
+                bestN = used;
+            }
+        }
+        LeaveCriticalSection(&g_pickLock);
+        return best;
+    }
+
     std::map<Character*, CombatTechniqueData*> g_riposte;
 
     void noteRiposte(Character* me, CombatTechniqueData* t)
@@ -847,6 +1000,11 @@ namespace
         CombatTechniqueData* r = NULL;
         CombatTechniqueData* other = NULL;
         int nulls = 0;
+
+        const bool even = exact == NULL && !moves::KINDS[want].special && cfg::b(cfg::EVEN_PICKS);
+        const int MAX_CAND = 8;
+        CombatTechniqueData* cand[MAX_CAND];
+        int ncand = 0;
         {
             PickRedirect redirect(p.self, dp);
             for (int i = 0; i < tries && r == NULL && p.budget > 0; ++i)
@@ -890,10 +1048,26 @@ namespace
                     continue;
                 }
                 if (k == want)
-                    r = t;
+                {
+                    if (!even)
+                        r = t;
+                    else
+                    {
+                        bool have = false;
+                        for (int c = 0; c < ncand; ++c)
+                            have = have || cand[c] == t;
+                        if (!have && ncand < MAX_CAND)
+                            cand[ncand++] = t;
+                    }
+                }
                 else if (fallback == NULL && !moves::KINDS[k].special && t != last)
                     fallback = t;
             }
+        }
+        if (even && ncand > 0)
+        {
+            r = leastPlayed(p.self->me, cand, ncand);
+            diag::count(ncand > 1 ? "pick_even_choice" : "pick_even_single");
         }
         if (r == NULL && repeat != NULL)
             diag::count("offhand_repeat_kept");
@@ -1204,6 +1378,7 @@ namespace
         if (isNitoryuTechnique(r))
         {
             noteOff(me, r);
+            notePlayed(me, r);
             noteRiposte(me, counter ? r : NULL);
             if (combat::isTwinTechnique(r))
                 noteDouble(me, p.now);
@@ -1233,6 +1408,7 @@ namespace
     CombatTechniqueData* choose_hook(CharStats* self, float range, float reach, CombatTechniqueData* last,
                                      bool stationary)
     {
+        diag::HookCall hc(diag::HK_CHOOSE_ATTACK);
 
         if (t_inSetWeapon)
         {
@@ -1255,6 +1431,7 @@ namespace
         p.special = false;
         p.now = defense::clockMs();
         p.budget = tuning::PICK_BUDGET;
+        hc.ours();
         diag::count("pick_dual");
         if (s.tier < 1)
         {
@@ -1271,6 +1448,12 @@ namespace
         if (pressed)
             diag::count("pick_special_target_full_pressure");
         bool riposte = p.special && !staggered && !pressed && riposteWindow(self->me, p.now);
+
+        if (riposte && roll01() >= cfg::f(cfg::CROSS_RIPOSTE_CHANCE))
+        {
+            riposte = false;
+            diag::count("pick_special_riposte_not_rolled");
+        }
         if (riposte)
             diag::count("pick_special_riposte");
         if (staggered || pressed || riposte)
@@ -1551,10 +1734,18 @@ namespace
     HitMaterialType hitBy_hook(Character* self, CutDirection dir, Damages& damage, Character* who,
                                CombatTechniqueData* attack, int comboID)
     {
+        diag::HookCall hc(diag::HK_HIT_BY);
 
         bool watch = self != NULL && foreign::active() && self->isPlayerCharacter();
         float cutIn = damage.cut, bluntIn = damage.blunt;
         HitMaterialType r = hitBy_inner(self, dir, damage, who, attack, comboID);
+
+        bool ours = g_enabled && who != NULL && (isNitoryuTechnique(attack) || stance::evaluate(who, NULL).dual
+                                                 || lefty::active(who));
+        if (ours)
+            hc.ours();
+        if (soundtrace::on())
+            soundtrace::impact(self, who, (int)r, comboID, attack != NULL ? attack->animation : std::string("?"), ours);
         if (watch)
             foreign::noteIncoming(self, nameOf(who), attack != NULL ? attack->animation : std::string("?"), comboID,
                                   (int)r, hitLanded(r), cutIn, bluntIn, damage.cut, damage.blunt);
@@ -1928,6 +2119,7 @@ namespace combat
         g_lastDouble.erase(c);
         g_crossArmed.erase(c);
         g_lastOff.erase(c);
+        g_played.erase(c);
         g_riposte.erase(c);
         g_foreignQuiet.erase(c);
         LeaveCriticalSection(&g_pickLock);
@@ -2099,26 +2291,44 @@ namespace combat
         g_iniSpinCooldownMs = iniNumber(ini, "Moves", "spin_cooldown_ms");
         g_iniSpinMinSkill = (float)iniNumber(ini, "Moves", "spin_min_skill");
         bool ok = true;
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::setWeapon), setWeapon_hook, &setWeapon_orig),
+        ok &= hook(hooks::add("CharStats::setWeapon", "core", KenshiLib::GetRealAddress(&CharStats::setWeapon), setWeapon_hook, &setWeapon_orig),
                    "CharStats::setWeapon");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::_calculateWeaponWeightSpeedMultiplier),
+        ok &= hook(hooks::add("CharStats::_calculateWeaponWeightSpeedMultiplier", "core", KenshiLib::GetRealAddress(&CharStats::_calculateWeaponWeightSpeedMultiplier),
                                       weightSpeed_hook, &weightSpeed_orig),
                    "CharStats::_calculateWeaponWeightSpeedMultiplier");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::calculateAttackOrBlockSpeed), speed_hook, &speed_orig),
+        ok &= hook(hooks::add("CharStats::calculateAttackOrBlockSpeed", "core", KenshiLib::GetRealAddress(&CharStats::calculateAttackOrBlockSpeed), speed_hook, &speed_orig),
                    "CharStats::calculateAttackOrBlockSpeed");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::getMeleeAttack), meleeAttack_hook, &meleeAttack_orig),
+        ok &= hook(hooks::add("CharStats::getMeleeAttack", "core", KenshiLib::GetRealAddress(&CharStats::getMeleeAttack), meleeAttack_hook, &meleeAttack_orig),
                    "CharStats::getMeleeAttack");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::_calculateBlockChance), blockChance_hook, &blockChance_orig),
+        ok &= hook(hooks::add("CharStats::_calculateBlockChance", "core", KenshiLib::GetRealAddress(&CharStats::_calculateBlockChance), blockChance_hook, &blockChance_orig),
                    "CharStats::_calculateBlockChance");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::_NV_getEquippedWeaponSkill),
+
+        g_panelPair = GetPrivateProfileIntA("Stats", "panel_pair_bonus", 1, ini.c_str()) != 0;
+        if (g_panelPair)
+        {
+            bool panel = hook(hooks::add("CharStats::skillBonusAttack_melee", "panel", KenshiLib::GetRealAddress(&CharStats::skillBonusAttack_melee),
+                                         bonusAttack_hook, &bonusAttack_orig), "CharStats::skillBonusAttack_melee");
+            panel = panel && hook(hooks::add("CharStats::getMeleeAttack_melee", "panel", KenshiLib::GetRealAddress(&CharStats::getMeleeAttack_melee),
+                                             attackMelee_hook, &attackMelee_orig), "CharStats::getMeleeAttack_melee");
+            panel = panel && hook(hooks::add("CharStats::skillBonusDefence", "panel", KenshiLib::GetRealAddress(&CharStats::skillBonusDefence),
+                                             bonusDefence_hook, &bonusDefence_orig), "CharStats::skillBonusDefence");
+            panel = panel && hook(hooks::add("CharStats::getMeleeDefence_melee", "panel", KenshiLib::GetRealAddress(&CharStats::getMeleeDefence_melee),
+                                             defenceMelee_hook, &defenceMelee_orig), "CharStats::getMeleeDefence_melee");
+
+            panel = panel && hook(hooks::add("CharStats::getGUIDataForMainInfo", "panel", KenshiLib::GetRealAddress(&CharStats::getGUIDataForMainInfo),
+                                             mainInfo_hook, &mainInfo_orig), "CharStats::getGUIDataForMainInfo");
+            if (!panel)
+                g_panelPair = false;
+        }
+        ok &= hook(hooks::add("CharStats::getEquippedWeaponSkill", "core", KenshiLib::GetRealAddress(&CharStats::_NV_getEquippedWeaponSkill),
                                       equippedSkill_hook, &equippedSkill_orig),
                    "CharStats::getEquippedWeaponSkill");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::chooseAttack), choose_hook, &choose_orig),
+        ok &= hook(hooks::add("CharStats::chooseAttack", "core", KenshiLib::GetRealAddress(&CharStats::chooseAttack), choose_hook, &choose_orig),
                    "CharStats::chooseAttack");
-        ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&Character::_NV_hitByMeleeAttack), hitBy_hook, &hitBy_orig),
+        ok &= hook(hooks::add("Character::hitByMeleeAttack", "core", KenshiLib::GetRealAddress(&Character::_NV_hitByMeleeAttack), hitBy_hook, &hitBy_orig),
                    "Character::hitByMeleeAttack");
 
-        if (!hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CombatTechniqueData::_CONSTRUCTOR), techCtor_hook, &techCtor_orig),
+        if (!hook(hooks::add("CombatTechniqueData::CombatTechniqueData", "core", KenshiLib::GetRealAddress(&CombatTechniqueData::_CONSTRUCTOR), techCtor_hook, &techCtor_orig),
                   "CombatTechniqueData::CombatTechniqueData"))
             kit::Diag("techniques").kv("registry", "off").kv("fallback", "category 21").emit();
         return ok;
