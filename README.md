@@ -30,7 +30,7 @@ to remove it, just disable it. saves stay loadable, characters only lose their D
 - **Katanas and sabres** pair, also one of each. Blunt and hackers can be switched on (`[Weapons] categories=0,1,2,4`), but I haven't tested them and they have no moves of their own. Heavy weapons, polearms and bows never pair. A weapon without a left-hand mesh (`bare sword`) can't be the second blade, that pair fights with one.
 - **The button** on the back weapon slot in the inventory (crossed blades = on, one grey blade = off) turns the dual stance on and off for that character. The choice is saved. No hotkey by default, `[UI] hotkey=alt+n` adds one.
 - **The second button** next to it (a blade crossed with a club) shows up on a character who carries two blunt weapons or hackers, or one of them with a katana or a sabre. Click it and this character fights with them as a pair, no ini editing. Saved with the character. Same as the `categories` switch: I haven't tested them and they have no moves of their own. `[UI] any_weapon_button=0` hides it.
-- Hold the mouse over either button and it says what it does. Nothing beyond blunt and hackers will ever be supported: heavy weapons, polearms and bows are two-handed. `[UI] button_tips=0` turns the text off.
+- Hold the mouse over either button and it says what it does. Nothing beyond blunt and hackers is supported: heavy weapons, polearms and bows are two-handed. `[UI] button_tips=0` turns the text off.
 - Everything else happens by itself in a fight: the fighter picks its strikes, parries and moves by its rank.
 - **Marks above the head** show the rank skills at work, no text: a wave with a bar that runs out is flow, a loop is a Mugen chain waiting for its twin strike, diamonds over an enemy are pressure stacks (red at full pressure). They show for the characters you have selected. What each one means and gives is in the Dual Wielding description in the stats window, next to the Path's formula. `[Marks] marks=2` shows them for all your characters, `marks=0` turns them off.
 
@@ -206,7 +206,7 @@ one thing isn't there yet: a track that animates both arms itself and plays as a
 
 `Nitoryu.ini` in the mod folder, read when the game starts. it's short: the switches on top, then the balance keys with their defaults. the balance keys are shipped commented out (with a `;`), because they also live in the game data and a mod can change them. remove the `;` and your value wins. the ones you'll most likely want:
 
-- `[General] language`: `auto`, `en`, `ru`, `zh`, ... (the Chinese texts are by 7 from the Workshop discussions, thanks!)
+- `[General] language`: `auto`, `en`, `ru`, `zh`, `ja`, ... (the Chinese texts are by 7 from the Workshop discussions, thanks! Japanese is a machine translation, corrections welcome)
 - `[General] diag`: how much goes into `RE_Kenshi_log.txt`: `off`, `normal` (default), `stage`, `verbose`.
 - `[UI] toggle_button`, `any_weapon_button`, `button_tips`, `button_size`, `hotkey`.
 - `[Stats] rank_colours`, `rank_up_message`, `group` (where the Dual Wielding line sits: 1 Weapons / 2 Combat).

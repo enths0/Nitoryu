@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Kenshi.h>
@@ -147,12 +147,12 @@ namespace dummy
         bool ok = KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharStats::xpTraining), xpTraining_hook,
                                      &xpTraining_orig) == KenshiLib::SUCCESS;
         if (!ok)
-            ErrorLog("Nitoryu: could not hook CharStats::xpTraining");
+            kit::log::error("Nitoryu: could not hook CharStats::xpTraining");
 
         ok = ok && KenshiLib::AddHook(KenshiLib::GetRealAddress(&UseableStuff::_NV_operate), operate_hook,
                                       &operate_orig) == KenshiLib::SUCCESS;
         if (!ok)
-            ErrorLog("Nitoryu: could not hook UseableStuff::operate; the pair dummy trains nothing");
+            kit::log::error("Nitoryu: could not hook UseableStuff::operate; the pair dummy trains nothing");
         return ok;
     }
 

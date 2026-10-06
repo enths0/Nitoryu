@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Kenshi.h>
@@ -469,7 +469,7 @@ namespace
     {
         if (s == KenshiLib::SUCCESS)
             return true;
-        ErrorLog(std::string("Nitoryu: could not hook ") + what);
+        kit::log::error(std::string("Nitoryu: could not hook ") + what);
         return false;
     }
 }

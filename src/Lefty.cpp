@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Character.h>
@@ -200,14 +200,14 @@ namespace lefty
         kit::Diag("lefty_config").kv("text", where).kv("min_ambidexterity", g_minA).emit();
         if (!looksRight)
         {
-            ErrorLog("Nitoryu: left-hand fighting is off: the melee task's weapon choice was not recognised on this game build");
+            kit::log::error("Nitoryu: left-hand fighting is off: the melee task's weapon choice was not recognised on this game build");
             return false;
         }
 
         if (KenshiLib::AddHook(target, reinterpret_cast<void*>(choose_hook), reinterpret_cast<void**>(&choose_orig))
             != KenshiLib::SUCCESS)
         {
-            ErrorLog("Nitoryu: could not hook the melee task's weapon choice; no left-hand fighting");
+            kit::log::error("Nitoryu: could not hook the melee task's weapon choice; no left-hand fighting");
             return false;
         }
         return true;

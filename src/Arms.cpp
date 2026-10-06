@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <OgreSkeleton.h>
@@ -1782,14 +1782,14 @@ namespace arms
         FARPROC target = ogre != NULL ? GetProcAddress(ogre, "?_updateTransforms@Skeleton@Ogre@@UEAAXXZ") : NULL;
         if (target == NULL)
         {
-            ErrorLog("Nitoryu: Ogre::Skeleton::_updateTransforms not found; no dual stance pose");
+            kit::log::error("Nitoryu: Ogre::Skeleton::_updateTransforms not found; no dual stance pose");
             return false;
         }
 
         if (KenshiLib::AddHook(reinterpret_cast<void*>(target), reinterpret_cast<void*>(updateTransforms_hook),
                                reinterpret_cast<void**>(&updateTransforms_orig)) != KenshiLib::SUCCESS)
         {
-            ErrorLog("Nitoryu: could not hook Ogre::Skeleton::_updateTransforms");
+            kit::log::error("Nitoryu: could not hook Ogre::Skeleton::_updateTransforms");
             return false;
         }
         return true;
@@ -2185,7 +2185,7 @@ namespace arms
         retimed.swap(g_retimeLog);
         LeaveCriticalSection(&g_lock);
         for (size_t i = 0; i < retimed.size(); ++i)
-            DebugLog(std::string("base_track_retimed ") + retimed[i] + " (the clip drives the upper body only)");
+            kit::log::line(std::string("base_track_retimed ") + retimed[i] + " (the clip drives the upper body only)");
         for (int sex = 0; sex < 2; ++sex)
             if (g_l3State[sex] != 0 && !g_l3Logged[sex])
             {

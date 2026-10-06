@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Character.h>
@@ -362,7 +362,7 @@ namespace ui
             return false;
         if (!InventoryGUIAccess::hook())
         {
-            ErrorLog("Nitoryu: could not hook InventoryGUI::refreshSection (no toggle button; Alt+Shift+N still works)");
+            kit::log::error("Nitoryu: could not hook InventoryGUI::refreshSection (no toggle button; Alt+Shift+N still works)");
             return false;
         }
         return true;

@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Kenshi.h>
@@ -150,7 +150,7 @@ namespace blades
         g_woundHook = KenshiLib::AddHook(KenshiLib::GetRealAddress(&MedicalSystem::addWound), addWound_hook,
                                          &addWound_orig) == KenshiLib::SUCCESS;
         if (!g_woundHook)
-            ErrorLog("Nitoryu: could not hook MedicalSystem::addWound");
+            kit::log::error("Nitoryu: could not hook MedicalSystem::addWound");
         return g_woundHook;
     }
 

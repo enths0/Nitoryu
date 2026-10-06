@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Kenshi.h>
@@ -686,15 +686,56 @@ namespace
         return false;
     }
 
+    DataPanelLine* g_barLine = NULL;
+
+    void fixBarFill(DataPanelLine* l)
+    {
+        if (l == NULL || l->widgets.size() < 2 || l->widgets[0] == NULL || l->widgets[1] == NULL)
+            return;
+        MyGUI::IntCoord frame = l->widgets[0]->getCoord();
+        MyGUI::IntCoord fill = l->widgets[1]->getCoord();
+        int top = frame.top + 3, height = frame.height - 9 > 1 ? frame.height - 9 : 1;
+        if (fill.top != top || fill.height != height)
+            l->widgets[1]->setCoord(fill.left, top, fill.width, height);
+    }
+
+    void (*lineResize_orig)(DataPanelLine*, int, int) = NULL;
+    void lineResize_hook(DataPanelLine* self, int width, int height)
+    {
+        lineResize_orig(self, width, height);
+        if (self != NULL && self == g_barLine)
+            fixBarFill(self);
+    }
+
+    const std::string NEXT_LEVEL_COLOUR = "#767676";
     void setProgress(DatapanelGUI* right, float a)
     {
         float frac = a - (float)(int)a;
         char pct[16];
         sprintf_s(pct, "%d%%", (int)(frac * 100.0f));
-        right->setLine(g_text.nextLevel, pct, frac, right->getCurrentCategory());
+        int cat = right->getCurrentCategory();
+        std::string key;
+        int n = right->getNumLines(cat);
+        for (int i = 0; i < n; ++i)
+        {
+            DataPanelLine* l = right->getLineByNum(cat, i);
+            if (l == NULL || l->getType() != DataPanelLine::DPL_RESEARCH)
+                continue;
+            if (key.empty())
+                key = l->keyValue;
+            else if (l->keyValue != key)
+            {
+                right->removeLine(l->keyValue, cat);
+                break;
+            }
+        }
+        if (key.empty())
+            key = NEXT_LEVEL_COLOUR + g_text.nextLevel;
+        g_barLine = right->setLine(key, NEXT_LEVEL_COLOUR + pct, frac, cat);
+        fixBarFill(g_barLine);
     }
 
-    void fillDescription(CharacterStatsWindow* win, float a)
+    void fillDescription(CharacterStatsWindow* win, float a, bool rightToo)
     {
         DatapanelGUI* left = win->description1Datapanel;
         DatapanelGUI* right = win->description2Datapanel;
@@ -703,7 +744,8 @@ namespace
         win->currentStatIdDescription = UI_KEY;
         win->statProgress = STAT_NONE;
         left->clear();
-        right->clear();
+        if (rightToo)
+            right->clear();
         int lc = left->getCurrentCategory();
         left->setLine(g_label, "", lc, false, true);
         left->setLine(heading(g_text.affectsTitle), "", lc, false, true);
@@ -788,6 +830,8 @@ namespace
             left->setLine(line + ": " + g_text.rankOpens[n], "", lc, false, true);
         }
         setProgress(right, a);
+        if (!rightToo)
+            return;
         int rc = right->getCurrentCategory();
         const char* const wrap = "Kenshi_WordWrapEmpty";
         int gaps = 0;
@@ -969,7 +1013,7 @@ namespace
         static DWORD lastFill = 0;
         if (mouseOver(line) && (!ours || GetTickCount() - lastFill > 200))
         {
-            fillDescription(win, a);
+            fillDescription(win, a, !ours);
             lastFill = GetTickCount();
         }
         else if (ours && win->description2Datapanel != NULL)
@@ -988,7 +1032,7 @@ namespace
     {
         if (s == KenshiLib::SUCCESS)
             return true;
-        ErrorLog(std::string("Nitoryu: could not hook ") + what);
+        kit::log::error(std::string("Nitoryu: could not hook ") + what);
         return false;
     }
 }
@@ -1088,6 +1132,9 @@ namespace ambidex
         ok &= hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&CharacterStatsWindow::_NV_update), statsWindow_hook,
                                       &statsWindow_orig),
                    "CharacterStatsWindow::update");
+
+        hook(KenshiLib::AddHook(KenshiLib::GetRealAddress(&DataPanelLine::_NV_resize), lineResize_hook, &lineResize_orig),
+             "DataPanelLine::resize");
         return ok;
     }
 

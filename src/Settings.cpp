@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 
 #include <kenshi/Kenshi.h>
 #include <kenshi/Globals.h>

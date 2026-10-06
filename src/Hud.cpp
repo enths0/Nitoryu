@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Kenshi.h>
@@ -669,7 +669,7 @@ namespace hud
         g_cellHook = KenshiLib::AddHook(KenshiLib::GetRealAddress(&PortraitMainCellView::update), cellUpdate_hook, &cellUpdate_orig)
                      == KenshiLib::SUCCESS;
         if (!g_cellHook)
-            ErrorLog("Nitoryu: could not hook PortraitMainCellView::update (no marks on the portraits; [Marks] place=2 shows them above the heads)");
+            kit::log::error("Nitoryu: could not hook PortraitMainCellView::update (no marks on the portraits; [Marks] place=2 shows them above the heads)");
         return g_cellHook;
     }
 

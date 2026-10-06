@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 #include <core/Functions.h>
 
 #include <kenshi/Globals.h>
@@ -40,7 +40,7 @@
 
 namespace
 {
-    const char* VERSION = "1.0.3";
+    const char* VERSION = "1.0.4";
 
     const DWORD COUNTS_STAGE_MS = 30000;
     const DWORD COUNTS_PROD_MS = 600000;
@@ -218,6 +218,7 @@ namespace
 
     void mainLoop_hook(GameWorld* self, float time)
     {
+        kit::log::tick();
         mainLoop_orig(self, time);
         LARGE_INTEGER t0;
         QueryPerformanceCounter(&t0);
@@ -295,7 +296,7 @@ __declspec(dllexport) void startPlugin()
     diag::init();
     if (!firstCopy())
     {
-        ErrorLog("Nitoryu: another Nitoryu is loaded (a local and a Workshop copy?); this copy stays off.");
+        kit::log::error("Nitoryu: another Nitoryu is loaded (a local and a Workshop copy?); this copy stays off.");
         return;
     }
     cfg::init(stance::iniFile());
@@ -315,7 +316,7 @@ __declspec(dllexport) void startPlugin()
     ui::init();
     hud::init();
     if (probeLoaded())
-        DebugLog("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded too; both hook the same combat functions. If fights misbehave, remove one of them.");
+        kit::log::line("Nitoryu: DualWieldProbe (DualWieldCore.dll) is loaded too; both hook the same combat functions. If fights misbehave, remove one of them.");
 
     std::string on, off;
     checkSharedHooks();
@@ -323,14 +324,14 @@ __declspec(dllexport) void startPlugin()
     bool core = KenshiLib::AddHook(KenshiLib::GetRealAddress(&GameWorld::_NV_mainLoop_GPUSensitiveStuff),
                                    mainLoop_hook, &mainLoop_orig) == KenshiLib::SUCCESS;
     if (!core)
-        ErrorLog("Nitoryu: could not hook GameWorld::mainLoop_GPUSensitiveStuff");
+        kit::log::error("Nitoryu: could not hook GameWorld::mainLoop_GPUSensitiveStuff");
     core = combat::installHooks() && core;
     core = ambidex::installLifetimeHook() && core;
     if (!core)
     {
         allOff();
-        ErrorLog("Nitoryu: core hooks failed; Nitoryu stays off.");
-        DebugLog(std::string("Nitoryu ") + VERSION + ": loaded, OFF (core hooks failed).");
+        kit::log::error("Nitoryu: core hooks failed; Nitoryu stays off.");
+        kit::log::line(std::string("Nitoryu ") + VERSION + ": loaded, OFF (core hooks failed).");
         return;
     }
     feature(on, off, "core", true);
@@ -339,7 +340,7 @@ __declspec(dllexport) void startPlugin()
     if (!layout)
     {
         visual::setEnabled(false);
-        ErrorLog(std::string("Nitoryu: game version ") + stance::gameVersion()
+        kit::log::error(std::string("Nitoryu: game version ") + stance::gameVersion()
                  + ": the dual stance needs the 1.0.65 memory layout and stays off (left-hand fighting still runs).");
     }
     feature(on, off, "layout", layout);
@@ -348,7 +349,7 @@ __declspec(dllexport) void startPlugin()
     if (!pose)
     {
         visual::setPoseEngine(false);
-        ErrorLog("Nitoryu: pose engine off; the second blade hangs in the left hand with a fixed grip.");
+        kit::log::error("Nitoryu: pose engine off; the second blade hangs in the left hand with a fixed grip.");
     }
     feature(on, off, "pose", pose);
     bool guard = defense::installHooks();
@@ -401,7 +402,7 @@ __declspec(dllexport) void startPlugin()
         test += " [Balance] overrides: " + balance::overridesText() + ".";
     if (arms::clipText()[0] != '\0')
         test += std::string(" L3 TEST ON: ") + arms::clipText() + ".";
-    DebugLog(std::string("Nitoryu ") + VERSION + ": loaded. features on=" + on + " off=" + (off.empty() ? "-" : off)
+    kit::log::line(std::string("Nitoryu ") + VERSION + ": loaded. features on=" + on + " off=" + (off.empty() ? "-" : off)
              + ". Weapon categories: " + stance::allowListText() + ". The inventory button toggles the stance (" + hotkeyText() + ")." + test
              + (feedback::stage() ? " ENV=stage (test speech bubbles on)." : " ENV=prod.") + " diag=" + diag::levelName() + ".");
 }

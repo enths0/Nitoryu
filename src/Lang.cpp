@@ -1,6 +1,6 @@
 #include "kit/input.h"
 
-#include <Debug.h>
+#include "kit/log.h"
 
 #include <cctype>
 #include <cstdio>
@@ -25,7 +25,7 @@ namespace
         { "speech.any_weapon", "Any weapon." },
         { "speech.blades_only", "Blades only." },
         { "tip.stance_button", "Two blades\nOn: the character fights with both carried weapons.\nOff: with one, as in vanilla. Saved with the character." },
-        { "tip.any_weapon_button", "Any weapon\nLets this character pair blunt weapons and hackers.\nThey have no moves of their own. Saved with the character.\nNo other weapon type will ever be supported:\nheavy weapons, polearms and bows are two-handed." },
+        { "tip.any_weapon_button", "Any weapon\nLets this character pair blunt weapons and hackers.\nThey have no moves of their own. Saved with the character.\nOther weapon types are not supported:\nheavy weapons, polearms and bows are two-handed." },
         { "speech.pressured", "Can't find an opening!" },
         { "speech.flow", "Flow." },
         { "speech.mugen", "Mugen." },

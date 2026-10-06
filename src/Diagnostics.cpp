@@ -83,6 +83,14 @@ namespace diag
             copy = g_counts;
             g_counts.clear();
         }
+
+        int queued = 0, dropped = 0;
+        kit::log::totals(queued, dropped);
+        if (queued > 0 || dropped > 0)
+        {
+            copy.add("log_lines_queued", queued);
+            copy.add("log_lines_dropped", dropped);
+        }
         copy.emit("counts");
     }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Debug.h>
+#include "log.h"
 #include <cstdio>
 #include <map>
 #include <string>
@@ -30,7 +30,7 @@ namespace kit
             return raw(key, q.c_str());
         }
 
-        void emit() const { DebugLog(line_); }
+        void emit() const { log::line(line_); }
 
     private:
         Diag& raw(const char* key, const char* value)
@@ -48,6 +48,7 @@ namespace kit
     {
     public:
         void inc(const char* reason) { ++counts_[reason]; }
+        void add(const char* reason, int n) { counts_[reason] += n; }
         int get(const char* reason) const
         {
             std::map<std::string, int>::const_iterator it = counts_.find(reason);
