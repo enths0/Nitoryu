@@ -205,6 +205,7 @@
     X("Training.xp_hit_taken") \
     X("Training.xp_outnumbered") \
     X("Training.xp_outnumbered_ms") \
+    X("Training.xp_own_level") \
     X("Training.xp_parry") \
     X("Training.xp_riposte") \
     X("Training.xp_twin") \

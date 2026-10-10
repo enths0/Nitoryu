@@ -260,6 +260,15 @@ namespace
     std::map<std::string, float> g_listSkill;
     int g_detailLeft = DETAIL_BUDGET;
 
+    struct WeaponSeen
+    {
+        int stat[2];
+        float lvl[2];
+        double next;
+    };
+    std::map<Character*, WeaponSeen> g_seen;
+    const double SEEN_STEP_MS = 500.0;
+
     struct Lock
     {
         Lock() { EnterCriticalSection(&g_lock); }
@@ -466,6 +475,7 @@ namespace
         {
             Lock l;
             g_amb.erase(self);
+            g_seen.erase(self);
             g_rankMax.erase(self);
             g_foes.erase(self);
         }
@@ -567,6 +577,34 @@ namespace
 
     float atLeast0(float v) { return finite(v) && v > 0.0f ? v : 0.0f; }
 
+    int pairStats(const stance::Info& s, int out[2])
+    {
+        int n = 0;
+        Weapon* w[2] = { s.main, s.off };
+        for (int i = 0; i < 2; ++i)
+        {
+            StatsEnumerated st = w[i] != NULL ? stance::statFor(w[i]->category) : STAT_NONE;
+            if (st != STAT_NONE && (n == 0 || out[0] != (int)st))
+                out[n++] = (int)st;
+        }
+        return n;
+    }
+
+    void markSeen(Character* c, CharStats* st, const stance::Info& s, double next)
+    {
+        int stats[2] = { -1, -1 };
+        int n = pairStats(s, stats);
+        Lock l;
+        WeaponSeen& w = g_seen[c];
+        for (int i = 0; i < 2; ++i)
+        {
+            w.stat[i] = i < n ? stats[i] : -1;
+            w.lvl[i] = i < n ? st->getStatRef((StatsEnumerated)stats[i]) : 0.0f;
+        }
+        if (next >= 0.0)
+            w.next = next;
+    }
+
     void (*xpMelee_orig)(CharStats*, CharStats::DeadTimeState, Character*, const Damages&) = NULL;
     void xpMelee_hook(CharStats* self, CharStats::DeadTimeState what, Character* target, const Damages& damage)
     {
@@ -611,12 +649,31 @@ namespace
         else if (offAttack || offParry)
             diag::count("xp_off_same_skill");
         bool hitTaken = what == CharStats::WAS_HIT;
+        const float weaponLevel = offSkill != NULL ? *offSkill : *saved;
         {
             SkillRedirect redirect(self, offSkill, hitTaken ? &self->getStatRef(STAT_MELEE_DEFENCE) : NULL);
             xpMelee_orig(self, what, target, damage);
         }
+        if (s.dual)
+            markSeen(me, self, s, -1.0);
 
         float base = cfg::f(cfg::AMB_XP_SHARE) * t_capAmount;
+
+        if (!hitTaken && base > 0.0f && cfg::b(cfg::AMB_XP_OWN_RATIO))
+        {
+            CharStats* ts = target->getStats();
+            if (ts != NULL)
+            {
+                float his = what == CharStats::BLOCKED_IT ? ts->getMeleeAttack() : ts->getMeleeDefence(false);
+                float rw = self->getSkillDifferenceRatio(weaponLevel, his);
+                float ra = self->getSkillDifferenceRatio(ambidex::stored(me), his);
+                if (rw > 0.0f && finite(ra / rw))
+                {
+                    base *= ra / rw;
+                    diag::count(ra > rw ? "ambi_xp_own_level_up" : ra < rw ? "ambi_xp_own_level_down" : "ambi_xp_own_level_same");
+                }
+            }
+        }
         float deed = 1.0f;
         const char* deedName = "";
         if (hitTaken)
@@ -1362,6 +1419,74 @@ namespace ambidex
     {
         if (c != NULL && finite(a))
             store(c, a);
+    }
+
+    void watchWeaponXp(Character* c)
+    {
+        if (!g_enabled || c == NULL)
+            return;
+        CharStats* st = c->getStats();
+        if (st == NULL)
+            return;
+        stance::Info s = stance::evaluate(c, NULL);
+        if (!s.dual)
+            return;
+        const double now = defense::clockMs();
+        int stats[2] = { -1, -1 };
+        const int n = pairStats(s, stats);
+        float xp = 0.0f, sMin = 1000.0f;
+        {
+            Lock l;
+            std::map<Character*, WeaponSeen>::iterator it = g_seen.find(c);
+            if (it == g_seen.end())
+            {
+                WeaponSeen w;
+                for (int i = 0; i < 2; ++i)
+                {
+                    w.stat[i] = i < n ? stats[i] : -1;
+                    w.lvl[i] = i < n ? st->getStatRef((StatsEnumerated)stats[i]) : 0.0f;
+                }
+                w.next = now + SEEN_STEP_MS;
+                g_seen[c] = w;
+                return;
+            }
+            WeaponSeen& w = it->second;
+            if (now < w.next && w.next - now <= SEEN_STEP_MS * 2.0)
+                return;
+            w.next = now + SEEN_STEP_MS;
+            for (int i = 0; i < n; ++i)
+            {
+                const float cur = st->getStatRef((StatsEnumerated)stats[i]);
+                sMin = std::min(sMin, cur);
+                for (int j = 0; j < 2; ++j)
+                {
+                    if (w.stat[j] != stats[i] || !(cur > w.lvl[j]) || !finite(cur))
+                        continue;
+                    const float f = (101.0f - w.lvl[j]) / 101.0f;
+                    if (f > 0.01f)
+                        xp += (cur - w.lvl[j]) / (f * f);
+                }
+            }
+            for (int i = 0; i < 2; ++i)
+            {
+                w.stat[i] = i < n ? stats[i] : -1;
+                w.lvl[i] = i < n ? st->getStatRef((StatsEnumerated)stats[i]) : 0.0f;
+            }
+        }
+        if (!(xp > 0.0f) || !finite(xp))
+            return;
+        float a = stored(c);
+        float k = 1.0f + (sMin - a) / 50.0f;
+        k = k < 0.25f ? 0.25f : (k > 2.0f ? 2.0f : k);
+        float next = a;
+        increase_orig(next, cfg::f(cfg::AMB_XP_SHARE) * xp * k, 101.0f);
+        if (!finite(next) || !(next > a))
+            return;
+        store(c, next);
+        diag::count("ambi_grow_watch");
+        if (c->isPlayerCharacter() && takeDetail())
+            kit::Diag("ambi_watch").kv("who", c->displayName).kv("weapon_xp", xp).kv("k", k).kv("a_before", a)
+                .kv("a_after", next).kv("skill_min", sMin).emit();
     }
 
     float stored(Character* c)

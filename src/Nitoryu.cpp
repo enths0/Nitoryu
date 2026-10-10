@@ -42,7 +42,7 @@
 
 namespace
 {
-    const char* VERSION = "1.0.5";
+    const char* VERSION = "1.0.6";
 
     const DWORD COUNTS_STAGE_MS = 30000;
     const DWORD COUNTS_PROD_MS = 120000;

@@ -37,4 +37,6 @@ namespace ambidex
     void noteImpact(Character* attacker, CombatTechniqueData* attack, bool offHand);
 
     void noteRank(Character* c);
+
+    void watchWeaponXp(Character* c);
 }

@@ -225,6 +225,8 @@
       "A training building whose record is ticked nitoryu pair dummy trains Dual Wielding up to its output rate, for a character carrying an allowed pair.") \
     X(AMB_XP_PARRY, F, "2.0", "nitoryu dual wielding xp parry", "Nitoryu 13 training", "Training", "xp_parry", \
       "Dual Wielding XP by deed: a parry with the second blade trains Dual Wielding this many times more than a plain block (the game gives a block a tenth of a hit's weapon XP). 1 = as a block.") \
+    X(AMB_XP_OWN_RATIO, B, "1", "nitoryu dual wielding xp own level", "Nitoryu 13 training", "Training", "xp_own_level", \
+      "1 = a fight trains Dual Wielding by how its own level compares with the opponent (the game does that for every skill), so it keeps growing while it is below the weapon skill, also against opponents the weapon skill has outgrown. 0 = by the weapon skill's level (before 1.1: Dual Wielding stalled once the weapon skill outgrew the opponents).") \
     X(AMB_XP_TWIN, F, "1.5", "nitoryu dual wielding xp twin", "Nitoryu 13 training", "Training", "xp_twin", \
       "Dual Wielding XP by deed: a hit that lands from a move of both blades (a twin strike, a finisher, an opener) trains Dual Wielding this many times more. 1 = as any hit.") \
     X(AMB_XP_RIPOSTE, F, "1.5", "nitoryu dual wielding xp riposte", "Nitoryu 13 training", "Training", "xp_riposte", \

@@ -1086,6 +1086,8 @@ namespace
                 continue;
             }
 
+            ambidex::watchWeaponXp(c);
+
             if (it->second.slot == SLOT_PROP)
             {
                 AppearanceBase* app = c->getAppearance();
