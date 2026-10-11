@@ -1,6 +1,7 @@
 // Threads:
 //   No hook of its own; evaluate() is called from every thread.
-//   g_lock guards g_cache, g_playerOff, g_playerAny, g_optIn, g_listPath, g_pathLogged; Info is copied out by value.
+//   g_lock guards g_cache, g_playerOff, g_playerAny, g_optIn, g_listPath, g_pathLogged, g_listAllow, g_listRefuse;
+//   Info is copied out by value. g_iniAllow and g_iniRefuse are written once in init and only read after it.
 
 #include "kit/input.h"   // Windows.h with NOMINMAX first
 
@@ -27,12 +28,14 @@
 #include <string>
 
 #include "core/Math.h"
+#include "core/Pair.h"
 #include "Stance.h"
 #include "Tuning.h"
 #include "Settings.h"
 #include "Balance.h"
 #include "Diagnostics.h"
 #include "Ambidex.h"
+#include "Api.h"
 #include "kit/diag.h"
 #include "kit/fcs.h"
 
@@ -68,6 +71,15 @@ namespace
     std::set<std::string> g_iniOptIn;               // [NPC] opt_in (string ids)
     std::set<std::string> g_optIn;                  // ini + the record's refs, under g_lock
     int g_npcRecordLeft = 12;                       // npc_record detail lines
+
+    // Weapons let into a pair or kept out of it by list, for a mod made in plain FCS (the WEAPON field
+    // `nitoryu dual wield` shows only with FCS Extended): the `weapons` list of two vendor lists of Nitoryu.mod
+    // that nothing references, and two id lists in the ini.
+    const char* WEAPONS_ALLOWED_RECORD = "51-Nitoryu.mod";
+    const char* WEAPONS_REFUSED_RECORD = "52-Nitoryu.mod";
+    std::set<std::string> g_iniAllow, g_iniRefuse;      // [Weapons] allow / refuse (string ids)
+    std::set<std::string> g_listAllow, g_listRefuse;    // the records' refs; under g_lock
+    volatile LONG g_weaponLists = 0;                    // 1 while any of the four holds an id
 
     // A Path set for a character, as a floor on the computed one. The same three routes as its Dual
     // Wielding (Ambidex.cpp `authored`): the ini, a field of the CHARACTER or FACTION record, the second
@@ -112,6 +124,8 @@ namespace
         r.weightDual = 0.0f;
         r.ambi = r.ambiEff = r.overload = r.dex = 0.0f;
         r.offFromHip = false;
+        r.byPlugin = core::ANSWER_DEFAULT;
+        r.attackSpeedMul = r.blockSpeedMul = r.offDamageMul = 1.0f;
         return r;
     }
 
@@ -280,12 +294,22 @@ namespace
         r.offFromHip = nb < 2 && r.off == hip[0];
 
         // the weapon's own record first (`nitoryu dual wield`), then the category list
-        if (stance::weaponRefused(r.main) || stance::weaponRefused(r.off))
-            return blank("weapon_refused");
-        if (!stance::weaponAllowedFor(c, r.main) || !stance::weaponAllowedFor(c, r.off))
-            return blank("type_not_allowed");
-        if (r.main->is2HandedOnly() || r.off->is2HandedOnly())
-            return blank("two_handed_only");
+        stance::PairTuning tune;
+        core::PairVerdict pair = stance::pairVerdict(c, r.main, r.off, &tune);
+        if (!pair.allowed)
+        {
+            if (pair.reason == core::PAIR_PLUGIN_REFUSED)
+                diag::count("api_pair_refused");
+            return blank(core::pairReasonName(pair.reason));
+        }
+        if (tune.answer != core::ANSWER_DEFAULT)
+        {
+            diag::count(tune.answer == core::ANSWER_ALLOW_TWO_HANDED ? "api_pair_two_handed" : "api_pair_allowed");
+            r.byPlugin = tune.answer;
+            r.attackSpeedMul = tune.attackSpeed;
+            r.blockSpeedMul = tune.blockSpeed;
+            r.offDamageMul = tune.offDamage;
+        }
         // A second weapon with no `bare sword` mesh cannot be shown in the left hand: such a pair
         // fights one-handed (a clean fallback, no half-built stance).
         if (kit::fcsFile(r.off->data, "bare sword", "").empty())
@@ -309,7 +333,7 @@ namespace
         float def = effDefence(st);
         float str = st->strengthActual();
         float s = r.skillMain < r.skillOff ? r.skillMain : r.skillOff;
-        r.weightDual = cfg::f(cfg::WEIGHT_MULT) * (r.main->combatWeight + r.off->combatWeight);
+        r.weightDual = cfg::f(cfg::WEIGHT_MULT) * (r.main->combatWeight + r.off->combatWeight) * tune.weight;
 
         if (!player)
         {
@@ -472,6 +496,35 @@ namespace stance
         kit::Diag("npc_config").kv("text", b).emit();
     }
 
+    // "a, b ,c" into the set, spaces around an id dropped.
+    static void splitIds(const char* text, std::set<std::string>& out)
+    {
+        std::string cur;
+        for (const char* q = text;; ++q)
+        {
+            if (*q == ',' || *q == '\0')
+            {
+                size_t a = cur.find_first_not_of(" \t"), b = cur.find_last_not_of(" \t");
+                if (a != std::string::npos)
+                    out.insert(cur.substr(a, b - a + 1));
+                cur.clear();
+                if (*q == '\0')
+                    break;
+            }
+            else
+                cur += *q;
+        }
+    }
+
+    // The WEAPON ids in a record's `weapons` list.
+    static void weaponRefs(const char* record, std::set<std::string>& out)
+    {
+        GameData* rec = ou->gamedata.getData(record);
+        const Ogre::vector<GameDataReference>::type* v = rec != NULL ? rec->getReferenceListIfExists("weapons") : NULL;
+        for (size_t k = 0; v != NULL && k < v->size(); ++k)
+            out.insert((*v)[k].sid);
+    }
+
     void init()
     {
         InitializeCriticalSection(&g_lock);
@@ -490,22 +543,14 @@ namespace stance
         // [NPC] opt_in stays an ini list (and the opt-in squad's references)
         char ids[2048] = { 0 };
         GetPrivateProfileStringA("NPC", "opt_in", "", ids, sizeof(ids), path.c_str());
-        std::string cur;
-        for (const char* q = ids;; ++q)
-        {
-            if (*q == ',' || *q == '\0')
-            {
-                size_t a = cur.find_first_not_of(" \t"), b = cur.find_last_not_of(" \t");
-                if (a != std::string::npos)
-                    g_iniOptIn.insert(cur.substr(a, b - a + 1));
-                cur.clear();
-                if (*q == '\0')
-                    break;
-            }
-            else
-                cur += *q;
-        }
+        splitIds(ids, g_iniOptIn);
         g_optIn = g_iniOptIn;
+        // [Weapons] allow / refuse: WEAPON ids, comma separated
+        GetPrivateProfileStringA("Weapons", "allow", "", ids, sizeof(ids), path.c_str());
+        splitIds(ids, g_iniAllow);
+        GetPrivateProfileStringA("Weapons", "refuse", "", ids, sizeof(ids), path.c_str());
+        splitIds(ids, g_iniRefuse);
+        InterlockedExchange(&g_weaponLists, g_iniAllow.empty() && g_iniRefuse.empty() ? 0 : 1);
         // [NPC] path=<string id>:<value>, CHARACTER or FACTION ids, comma separated
         int badPath = cfg::readIdValues(path, "NPC", "path", g_iniPath);
         if (!g_iniPath.empty() || badPath > 0)
@@ -568,16 +613,34 @@ namespace stance
             }
         }
         ambidex::setListSkills(skills);
-        bool changed;
+        std::set<std::string> allow, refuse;
+        weaponRefs(WEAPONS_ALLOWED_RECORD, allow);
+        weaponRefs(WEAPONS_REFUSED_RECORD, refuse);
+        bool changed, weaponsChanged;
         {
             Lock l;
             changed = ids != g_optIn || paths != g_listPath;
+            weaponsChanged = allow != g_listAllow || refuse != g_listRefuse;
             if (changed)
             {
                 g_optIn = ids;
                 g_listPath = paths;
-                g_cache.clear();
             }
+            if (weaponsChanged)
+            {
+                g_listAllow = allow;
+                g_listRefuse = refuse;
+                InterlockedExchange(&g_weaponLists, allow.empty() && refuse.empty() && g_iniAllow.empty() && g_iniRefuse.empty() ? 0 : 1);
+            }
+            if (changed || weaponsChanged)
+                g_cache.clear();
+        }
+        static bool weaponsLogged = false;
+        if (weaponsChanged || (!weaponsLogged && g_weaponLists))
+        {
+            weaponsLogged = true;
+            kit::Diag("weapon_list").kv("allowed", (int)allow.size()).kv("refused", (int)refuse.size())
+                .kv("ini_allowed", (int)g_iniAllow.size()).kv("ini_refused", (int)g_iniRefuse.size()).emit();
         }
         if (changed || d == NULL)
         {
@@ -624,17 +687,87 @@ namespace stance
 
     bool allowed(WeaponCategory c) { return c >= 0 && c < NUM_SKILL_TYPES && g_allowed[c]; }
 
-    bool weaponRefused(Weapon* w)
+    static_assert(core::CAT_BLUNT == SKILL_BLUNT && core::CAT_HACKERS == SKILL_HACKERS, "core/Pair.h names the game's categories");
+
+    // A weapon's own word on pairing (core::WeaponRecord): the ini's lists, then its WEAPON field `nitoryu dual
+    // wield`, then the lists of Nitoryu.mod; inside one source a refusal wins.
+    static int recordOf(Weapon* w)
     {
-        return w != NULL && kit::fcsInt(w->data, "nitoryu dual wield", 0) == 2;
+        int field = kit::fcsInt(w->data, "nitoryu dual wield", 0);
+        if (!g_weaponLists || w->data == NULL)
+            return field;
+        // The game's string is copied before the lock; nothing of the game is read under it.
+        const std::string id = w->data->stringID;
+        int by = core::RECORD_BY_CATEGORY;
+        if (g_iniRefuse.count(id) > 0)
+            by = core::RECORD_REFUSED;
+        else if (g_iniAllow.count(id) > 0)
+            by = core::RECORD_ALLOWED;
+        else if (field == core::RECORD_ALLOWED || field == core::RECORD_REFUSED)
+            return field;
+        else
+        {
+            Lock l;
+            if (g_listRefuse.count(id) > 0)
+                by = core::RECORD_REFUSED;
+            else if (g_listAllow.count(id) > 0)
+                by = core::RECORD_ALLOWED;
+        }
+        if (by == core::RECORD_BY_CATEGORY)
+            return field;
+        diag::count(by == core::RECORD_ALLOWED ? "weapon_allowed_by_list" : "weapon_refused_by_list");
+        return by;
     }
 
-    bool weaponAllowed(Weapon* w)
+    static core::WeaponFacts factsOf(Weapon* w)
     {
-        if (w == NULL)
-            return false;
-        int v = kit::fcsInt(w->data, "nitoryu dual wield", 0);
-        return v == 2 ? false : v == 1 ? true : allowed(w->category);
+        core::WeaponFacts f;
+        f.category = (int)w->category;
+        f.record = recordOf(w);
+        f.twoHandedOnly = w->is2HandedOnly();
+        f.categoryAllowed = allowed(w->category);
+        return f;
+    }
+
+    core::PairVerdict pairVerdict(Character* c, Weapon* a, Weapon* b, PairTuning* tuning)
+    {
+        const PairTuning plain = { core::ANSWER_DEFAULT, 1.0f, 1.0f, 1.0f, 1.0f };
+        if (tuning != NULL)
+            *tuning = plain;
+        if (a == NULL || b == NULL)
+        {
+            core::PairVerdict none = { false, core::PAIR_TYPE_NOT_ALLOWED, false };
+            return none;
+        }
+        bool player = c != NULL && c->isPlayerCharacter();
+        core::PairFacts f;
+        f.a = factsOf(a);
+        f.b = factsOf(b);
+        f.button = player && anyWeapon(c);
+        f.plugin = core::ANSWER_DEFAULT;
+        core::PairVerdict own = core::pairVerdict(f);
+        if (!api::hasPairRules())
+            return own;
+        PairTuning t = plain;
+        int answer = api::pairRules(c, a, b, f, own, player, t);
+        if (answer == core::ANSWER_DEFAULT)
+            return own;
+        // A pair a plugin lets in fights with the two weapons' skills: both categories need one the game has.
+        if (answer != core::ANSWER_REFUSE && (statFor(a->category) == STAT_NONE || statFor(b->category) == STAT_NONE))
+        {
+            diag::count("api_pair_no_weapon_skill");
+            return own;
+        }
+        f.plugin = answer;
+        core::PairVerdict v = core::pairVerdict(f);
+        if (tuning != NULL && v.allowed)
+            *tuning = t;
+        return v;
+    }
+
+    bool oneHandedAllowed(Weapon* w)
+    {
+        return w != NULL && core::oneHandedAllowed(factsOf(w));
     }
 
     bool anyWeapon(Character* c)
@@ -665,21 +798,6 @@ namespace stance
             g_playerAny.insert(c);
         else
             g_playerAny.erase(c);
-    }
-
-    bool categoryAllowedFor(Character* c, WeaponCategory cat)
-    {
-        if (allowed(cat))
-            return true;
-        return (cat == SKILL_BLUNT || cat == SKILL_HACKERS) && c != NULL && c->isPlayerCharacter() && anyWeapon(c);
-    }
-
-    bool weaponAllowedFor(Character* c, Weapon* w)
-    {
-        if (w == NULL)
-            return false;
-        int v = kit::fcsInt(w->data, "nitoryu dual wield", 0);
-        return v == 2 ? false : v == 1 ? true : categoryAllowedFor(c, w->category);
     }
 
     int rigOf(Character* c)
@@ -743,10 +861,13 @@ namespace stance
         Info r = computeSafe(c, mainOverride);
         if (mainOverride == NULL)
         {
-            Lock l;
-            Cached& e = g_cache[c];
-            e.tick = now;
-            e.info = r;
+            {
+                Lock l;
+                Cached& e = g_cache[c];
+                e.tick = now;
+                e.info = r;
+            }
+            api::observe(c, r);     // outside the lock: what changed since the last fresh one becomes an event
         }
         return r;
     }
@@ -808,7 +929,7 @@ namespace stance
         int nh = weaponsIn(inv, "hip", hip, 1);
         Weapon* a = nb >= 1 ? back[0] : NULL;
         Weapon* b = nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL;
-        if (a != NULL && b != NULL && stance::categoryAllowedFor(c, a->category) && stance::categoryAllowedFor(c, b->category))
+        if (stance::pairVerdict(c, a, b).allowed)
         {
             float sa = st->getStat(stance::statFor(a->category), false);
             float sb = st->getStat(stance::statFor(b->category), false);
@@ -864,8 +985,7 @@ namespace stance
         int nh = weaponsIn(inv, "hip", hip, 1);
         a = nb >= 1 ? back[0] : NULL;
         b = nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL;
-        return a != NULL && b != NULL && stance::categoryAllowedFor(c, a->category) && stance::categoryAllowedFor(c, b->category)
-            && !a->is2HandedOnly() && !b->is2HandedOnly();
+        return stance::pairVerdict(c, a, b).allowed;
     }
 
     bool needsAnyWeapon(Character* c)
@@ -877,19 +997,7 @@ namespace stance
         Weapon* hip[1] = { NULL };
         int nb = weaponsIn(inv, "back", back, 2);
         int nh = weaponsIn(inv, "hip", hip, 1);
-        Weapon* w[2] = { nb >= 1 ? back[0] : NULL, nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL };
-        bool locked = false;
-        for (int i = 0; i < 2; ++i)
-        {
-            if (w[i] == NULL || w[i]->is2HandedOnly() || weaponRefused(w[i]))
-                return false;
-            if (weaponAllowed(w[i]))
-                continue;
-            if (w[i]->category != SKILL_BLUNT && w[i]->category != SKILL_HACKERS)
-                return false;
-            locked = true;
-        }
-        return locked;
+        return pairVerdict(c, nb >= 1 ? back[0] : NULL, nb >= 2 ? back[1] : nh == 1 ? hip[0] : NULL).needsButton;
     }
 
     bool hasPair(Character* c)

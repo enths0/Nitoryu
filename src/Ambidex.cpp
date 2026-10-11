@@ -55,6 +55,7 @@
 #include "Mastery.h"
 #include "Blades.h"
 #include "Stance.h"
+#include "Api.h"
 #include "Lefty.h"
 #include "Feedback.h"
 #include "Lang.h"
@@ -534,6 +535,7 @@ namespace
         defense::forget(self);
         lefty::forget(self);
         feedback::forget(self);
+        api::forget(self);
         charDtor_orig(self);
     }
 

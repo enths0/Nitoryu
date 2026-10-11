@@ -33,6 +33,7 @@
 #include "Blades.h"
 #include "Combat.h"
 #include "Stance.h"
+#include "Api.h"
 #include "Settings.h"
 #include "Balance.h"
 #include "Diagnostics.h"
@@ -497,6 +498,8 @@ namespace
                 armCounter(d, s.tier, now);
             }
         }
+        if (ok)
+            api::offHandParry(me, who);
         diag::count(ok ? (group ? "guard_group_ok" : comboHit ? "guard_combo_ok" : "guard_main_ok")
                        : (group ? "guard_group_fail" : comboHit ? "guard_combo_fail" : "guard_main_fail"));
         if ((me->isPlayerCharacter() || who->isPlayerCharacter() || ok) && takeGuardDetail())

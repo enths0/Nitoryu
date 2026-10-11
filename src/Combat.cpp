@@ -43,6 +43,7 @@
 
 #include "Combat.h"
 #include "Stance.h"
+#include "Api.h"
 #include "Tuning.h"
 #include "Settings.h"
 #include "Balance.h"
@@ -137,6 +138,7 @@ namespace
         float weight;               // `nitoryu weight`, its share in the even pick (1 = as the others, 0 = never)
         float weightHigh;           // `nitoryu weight high`: the same at rank 3+, < 0: `nitoryu weight`
         bool mainHand;              // a strike of the right blade alone (`use R arm`, not `use L arm`)
+        unsigned weapons;           // `nitoryu move weapons`: a bit per weapon category the move is for, 0 = any pair
     };
     CRITICAL_SECTION g_techLock;
     std::map<CombatTechniqueData*, TechRec> g_tech;     // under g_techLock
@@ -205,6 +207,25 @@ namespace
         rec.weight = std::max(0.0f, kit::fcsFloat(d, "nitoryu weight", 1.0f));
         rec.weightHigh = kit::fcsFloat(d, "nitoryu weight high", -1.0f);
         rec.mainHand = kit::fcsBool(d, "use R arm", false) && !kit::fcsBool(d, "use L arm", true);
+        rec.weapons = 0;
+        {
+            // "0,1,3": the weapon categories; anything that is not a number below 32 is skipped
+            const std::string list = kit::fcsString(d, "nitoryu move weapons", "");
+            const char* q = list.c_str();
+            while (*q != '\0')
+            {
+                if (*q >= '0' && *q <= '9')
+                {
+                    char* end = NULL;
+                    long v = strtol(q, &end, 10);
+                    if (v >= 0 && v < 32)
+                        rec.weapons |= 1u << v;
+                    q = end;
+                }
+                else
+                    ++q;
+            }
+        }
         const moves::Record* table = rec.number > 0 ? moves::recordOfNumber(rec.number) : NULL;
         int mv = kit::fcsInt(d, "nitoryu move", -1);
         if (mv >= 0)
@@ -575,7 +596,7 @@ namespace
             // In flow the attack speed has its own factor and a higher cap (blocks: unchanged).
             Character* me = self != NULL ? self->me : NULL;
             float flowK = isBlock ? 1.0f : flow::speedFactor(me);
-            r = stance::applySpeed(r, s.speedFactor * flowK, isBlock, isBlock ? 0.0f : flow::capBonus(me));
+            r = stance::applySpeed(r, stance::speedOf(s, isBlock) * flowK, isBlock, isBlock ? 0.0f : flow::capBonus(me));
             noteSpeed(self, isBlock, game, r, flowK);
         }
         else if (g_enabled && self != NULL && !t_inSetWeapon && lefty::active(self->me))
@@ -1222,6 +1243,50 @@ namespace
     // (HAND_OFF) or takes only them (HAND_MAIN, stageMainHand).
     enum Hand { HAND_ANY, HAND_OFF, HAND_MAIN };
 
+    // May this pair use the move: a plugin's move filter first, then the record's own `nitoryu move weapons`
+    // (both weapons' categories in the list; an empty list is every pair).
+    bool pairMayUse(const Pick& p, CombatTechniqueData* t)
+    {
+        if (p.s.main == NULL || p.s.off == NULL)
+            return true;
+        TechRec tr;
+        bool known = techRec(t, tr);
+        int cm = (int)p.s.main->category, co = (int)p.s.off->category;
+        bool listed = !known || tr.weapons == 0
+                      || (cm >= 0 && cm < 32 && co >= 0 && co < 32 && (tr.weapons & (1u << cm)) != 0 && (tr.weapons & (1u << co)) != 0);
+        if (api::hasMoveFilters())
+        {
+            // the game's strings are copied: the plugin gets text that stays put for the call
+            char id[64], track[64];
+            copyText(id, sizeof(id), known && tr.data != NULL ? tr.data->stringID : std::string());
+            copyText(track, sizeof(track), t->animation);
+            api::MoveAsk m;
+            m.c = p.self->me;
+            m.main = p.s.main;
+            m.off = p.s.off;
+            m.record = known ? tr.data : NULL;
+            m.recordId = id;
+            m.track = track;
+            m.kind = known ? (int)tr.def.kind : (int)moves::OTHER;
+            m.categoryMain = cm;
+            m.categoryOff = co;
+            m.mainHand = known && tr.mainHand;
+            m.twoHandedPair = p.s.byPlugin == core::ANSWER_ALLOW_TWO_HANDED;
+            m.listed = listed;
+            int answer = api::moveFilter(m);
+            if (answer == 2)
+            {
+                diag::count("pick_skip_plugin_filter");
+                return false;
+            }
+            if (answer == 1)
+                return true;
+        }
+        if (!listed)
+            diag::count("pick_skip_move_weapons");
+        return listed;
+    }
+
     CombatTechniqueData* drawOffHand(Pick& p, Want want, int tries, bool noTwin = false,
                                      CombatTechniqueData* exact = NULL, Hand hand = HAND_ANY)
     {
@@ -1268,6 +1333,8 @@ namespace
                     diag::count("record_clip_off_skip");
                     continue;
                 }
+                if (!pairMayUse(p, t))
+                    continue;
                 bool mainHand = techRec(t, tr) && tr.mainHand;
                 if ((hand == HAND_OFF && mainHand) || (hand == HAND_MAIN && !mainHand))
                 {
@@ -1592,7 +1659,11 @@ namespace
         // left hand cannot join the grip). Pick again, avoiding them. Two-handed by the record's
         // `1 handed` flag, so another mod's long ONE-handed move plays; vanilla's short two-handed
         // swings stay as ever.
-        if (!mirrored && r != NULL && !isNitoryuTechnique(r) && r->initialDistance > cfg::f(cfg::FOREIGN_REPICK_OVER))
+        // A pair with a two-handed weapon in it (a plugin's pair rule) keeps them: they are its weapon's own.
+        if (!mirrored && r != NULL && !isNitoryuTechnique(r) && r->initialDistance > cfg::f(cfg::FOREIGN_REPICK_OVER)
+            && p.s.byPlugin == core::ANSWER_ALLOW_TWO_HANDED)
+            diag::count("two_handed_kept_pair");
+        else if (!mirrored && r != NULL && !isNitoryuTechnique(r) && r->initialDistance > cfg::f(cfg::FOREIGN_REPICK_OVER))
         {
             if (!longTwoHanded(r))
                 diag::count("long_one_handed_kept");
@@ -1655,6 +1726,7 @@ namespace
             return NULL;
         noteUse(f, me, p.now);
         noteDouble(me, p.now);
+        api::special(me, (int)moves::FINISHER, tag.c_str());
         if (diag::takeDetail())
             kit::Diag("special_pick").kv("who", nameOf(me)).kv("move", tag)
                 .kv("trigger", trigger).kv("dp", p.s.dp)
@@ -1695,6 +1767,7 @@ namespace
             return NULL;
         noteUse(o, me, p.now);
         noteDouble(me, p.now);          // no twin right after it (its own gate stays)
+        api::special(me, (int)moves::OPENER, tag.c_str());
         if (diag::takeDetail())
             kit::Diag("special_pick").kv("who", nameOf(me)).kv("move", tag).kv("dp", p.s.dp)
                 .kv("ambi_eff", p.s.ambiEff).kv("range", p.range).kv("reach", p.reach).emit();
@@ -2042,6 +2115,7 @@ namespace
             k *= own < 0.0f ? 0.0f : own;
             diag::count("offhand_weapon_factor");
         }
+        k *= s.offDamageMul;        // a plugin's number for this pair, 1 without one
         float t = offTargetRatio(st, s.off, victim);
         d.cut *= k * cutRatio * t;
         d.blunt *= k * bluntRatio * t;
@@ -2236,6 +2310,7 @@ namespace
         {
             arms::clipHit(self);
             noteLandedHit(self, who, off);
+            api::offHandHit(who, self, s.off, (int)combat::moveKind(attack), attack->animation.c_str());
         }
         if (diag::takeDetail())
             kit::Diag(n.line).kv("attacker", nameOf(who)).kv("victim", nameOf(self))
@@ -2335,6 +2410,7 @@ namespace
                 arms::clipHit(flanker);
                 noteLandedHit(flanker, who, damage);
                 mugen::onTwinLanded(who);
+                api::offHandHit(who, flanker, s.off, (int)combat::moveKind(attack), attack->animation.c_str());
             }
             if (diag::takeDetail())
                 kit::Diag("split_hit").kv("attacker", nameOf(who)).kv("main_target", nameOf(self))
@@ -2357,6 +2433,8 @@ namespace
         // Mugen: the left blade of a twin landed: at rank 5 the next pick may be a twin again.
         if (hitLanded(r) && twin)
             mugen::onTwinLanded(who);
+        if (hitLanded(r))
+            api::offHandHit(who, self, s.off, (int)combat::moveKind(attack), attack->animation.c_str());
         if ((who->isPlayerCharacter() || self->isPlayerCharacter()) && diag::takeDetail())
             kit::Diag("offhand_hit").kv("attacker", nameOf(who)).kv("victim", nameOf(self))
                 .kv("tech", attack->animation).kv("combo", comboID).kv("tier", s.tier)
@@ -2499,7 +2577,7 @@ namespace combat
         if (st->attackSpeed != rec.dualAtk && st->attackSpeed > 0.0f)
         {
             float base = st->attackSpeed;
-            float dual = stance::applySpeed(base, s.speedFactor * flowK, false, flowCap);
+            float dual = stance::applySpeed(base, stance::speedOf(s, false) * flowK, false, flowCap);
             if (dual != base)
             {
                 st->attackSpeed = dual;
@@ -2511,7 +2589,7 @@ namespace combat
         else if (rec.flowAtk != flowK && rec.gameAtk > 0.0f && st->attackSpeed > 0.0f)
         {
             // flow began or ended: the field holds our value, so the same base gets the new factor
-            float dual = stance::applySpeed(rec.gameAtk, s.speedFactor * flowK, false, flowCap);
+            float dual = stance::applySpeed(rec.gameAtk, stance::speedOf(s, false) * flowK, false, flowCap);
             st->attackSpeed = dual;
             noteSpeed(st, false, rec.gameAtk, dual, flowK);
             diag::count(flowK > 1.0f ? "flow_speed_on" : "flow_speed_off");
@@ -2522,7 +2600,7 @@ namespace combat
         if (st->blockSpeed != rec.dualBlk && st->blockSpeed > 0.0f)
         {
             float base = st->blockSpeed;
-            float dual = stance::applySpeed(base, s.speedFactor, true);
+            float dual = stance::applySpeed(base, stance::speedOf(s, true), true);
             if (dual != base)
             {
                 st->blockSpeed = dual;

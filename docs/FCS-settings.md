@@ -208,6 +208,7 @@ the range of the values, for a list of each number.
 | `nitoryu foreign control plugins` | text | `ShoulderCombat.dll` |  | `[Compat] plugins` | DLL file names, comma separated. With foreign control on auto, one of them loaded turns the giving way on. |
 | `nitoryu foreign control hold ms` | int | `6000` | 0 or more | `[Compat] hold_ms` | After the other plugin's last swing or block, for this many milliseconds of game time the run animation waits for a steady run (run ms). A draw or a sheathe under its swing gets no animation, the blades follow at once. |
 | `nitoryu foreign control run ms` | int | `300` | 0 or more | `[Compat] run_ms` | In that time the run animation starts only after this many milliseconds of running without a stop. |
+| `nitoryu addons` | bool | `1` |  | `[Compat] addons` | Other plugins may build on Nitoryu through its plugin API (docs/API.md): read a fighter's state, follow its events. Off = no such plugin is called and the API stays closed, to tell a problem of Nitoryu's from an addon's. Read once, at the start of the game. |
 
 ## Nitoryu 15 marks
 

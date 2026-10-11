@@ -63,6 +63,8 @@ Install the mod from the Workshop first (it brings `Nitoryu.mod` and the animati
 | `src/McmDef.h` | the in-game settings page |
 | `src/Moves.h`, `src/ClipsGen.h` | the moves and their animation clips |
 | `src/core/` | pure math with no game header |
+| `src/api/NitoryuApi.h` | the API for other plugins, one C header (`docs/API.md`) |
+| `examples/NitoryuAddonSample/` | a small plugin built on that API |
 | `src/kit/` | small helpers: logging, FCS fields, input, RTTI lookup |
 | `mod/` | the mod folder: `Nitoryu.ini`, `fcs.def`, `lang/`, icons |
-| `docs/` | the modders' manual (`FCS.md`, `FCS_RU.md`), the settings table, the balance |
+| `docs/` | the modders' manual (`FCS.md`, `FCS_RU.md`), the plugin API (`API.md`, `API_RU.md`), the settings table, the balance |

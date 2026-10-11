@@ -62,7 +62,7 @@ namespace
 
     bool oneHandedAllowed(Weapon* w)
     {
-        return w != NULL && stance::weaponAllowed(w) && !w->is2HandedOnly();    // the weapon's own record first
+        return stance::oneHandedAllowed(w);     // the weapon's own record first
     }
 
     bool carriesOneHanded(Character* c)

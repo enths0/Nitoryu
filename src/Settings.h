@@ -41,6 +41,7 @@ namespace cfg
     int items(Id id);                       // L: how many
     const std::string& text(Id id);         // C, L, S (main loop only)
     const char* defaultText(Id id);         // the table's default, as written there
+    std::string valueText(Id id);           // the value in force as text, any type (main loop only)
     Source source(Id id);
     const char* fcsKey(Id id);
 

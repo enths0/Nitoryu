@@ -204,10 +204,11 @@ Nitoryu 不替换游戏的速度公式。游戏照常计算攻击和格挡速度
 
 1. **平衡。** 约 100 项设置以 `nitoryu ...` 字段放在 GLOBAL CONSTANTS 上：道的权重、段位、每条曲线、惩罚、速度、招架、压制、流转、无限、配对加成、NPC 规则。在你的 mod 里改一个字段，所有用你 mod 的人都会生效。玩家自己的 `Nitoryu.ini` 里如果设了同一项，仍然以玩家为准。
 2. **招式。** 双持招式就是带几个 `nitoryu` 字段的 COMBAT_TECHNIQUE 记录：它是什么（副手攻击、双持合击、终结技、远距离招式）、冷却、距离、上面叠加我的哪个动画片段。我自己的招式就是这么做的，复制一个改改就行。
-3. **武器。** WEAPON 上的 `nitoryu dual wield` 让它进入或排除出配对，不管类别。`nitoryu off hand damage` 改它作为副手时的伤害，`nitoryu pair length` 设置它在配对中的角色（长或短）。
+3. **武器。** WEAPON 上的 `nitoryu dual wield` 让它进入或排除出配对，不管类别。`nitoryu off hand damage` 改它作为副手时的伤害，`nitoryu pair length` 设置它在配对中的角色（长或短）。没有 FCS Extended 时：把 WEAPON 加进“Nitoryu weapons allowed in a pair”或“Nitoryu weapons refused in a pair”的 `weapons` 列表（两个没有商店使用的商人列表）；玩家可以在 ini 里用 `[Weapons] allow=` / `refuse=`。招式上的 `nitoryu move weapons` 指定它用于哪些武器类别。
 4. **NPC。** 在你的 CHARACTER 或 FACTION 上勾选 `nitoryu dual wielder`，他们带着一对武器时就会用双刀战斗，没有属性下限也没有段位上限，即使玩家设了 `[NPC] dual=authored`。旧方法也还能用：把他们加进小队“Nitoryu dual wielders (opt-in list)”（它永远不会生成），或者在 ini 里写 `[NPC] opt_in=<string id>,<string id>`。想在普通 FCS 里设置他们的双持技能（属性窗口里的数值），把角色或派系加进小队“Nitoryu dual wielders (Dual Wielding 40 / 60 / 80 / 100)”之一，或者在那里把精确数值填为角色的第一个值，这样双持高手不需要刷高属性。字段 `nitoryu dual wielding` 和 ini 里的 `[NPC] skill=<string id>:<value>` 作用相同。对于不管属性如何都必须是高手的 NPC，也要设置他的最低道：那些小队里角色的第二个值、字段 `nitoryu path`，或 `[NPC] path=<string id>:<value>`。
 5. **种族。** 如果我的镜像在你的骨架上看起来不对，在 RACE 上设 `nitoryu rig`：1 把副手刀固定在左手握持，2 为该种族关闭 Nitoryu。
 6. **训练。** 训练用 BUILDING 上的 `nitoryu pair dummy` 让它把双持练到它的 `output rate`。
+7. **你自己的插件。** 如果你写 RE_Kenshi 插件，有一个 C++ API：查询角色是否用双刀战斗、段位、道和双持，接收事件（副手命中、招架、特殊招式、段位变化），并添加你自己的配对规则（任意两把武器，重武器也行，用你自己的数值）。手册是这个文件旁边的 `API.md`（俄语版：`API_RU.md`），头文件是 `NitoryuApi.h`，示例插件在源码仓库里。
 
 想在 FCS 里看到这些字段和提示，需要 FCS Extended（它会从 mod 文件夹加载 `fcs.def`，就像 Second Life of Kenshi 自己的字段那样显示）。玩家不需要它。手册是这个文件旁边的 `FCS.md`（怎么加招式、每个字段、我自己的记录、怎么在普通 FCS 里设置 NPC 的双持；俄语版：`FCS_RU.md`），设置表是 `FCS-settings.md`，每个字段及说明都在 `fcs.def` 里；在游戏数据里这个技能仍然叫 Ambidexterity，道叫“DP”。
 
@@ -234,7 +235,7 @@ mod 文件夹里的 `Nitoryu.ini`，游戏启动时读取（设置菜单也会�
 
 ## 给插件作者：Nitoryu 挂钩了什么
 
-如果你的插件也挂钩了其中某个，两者都会运行（钩子会串联），但出问题请告诉我。启动时 Nitoryu 会为每个别人先挂钩的目标记录 `shared_hook target=...`，游戏 60 秒后记录一行 `compat`。
+给你插件用的 C++ API 在 `API.md` 里。如果你的插件也挂钩了其中某个，两者都会运行（钩子会串联），但出问题请告诉我。启动时 Nitoryu 会为每个别人先挂钩的目标记录 `shared_hook target=...`，游戏 60 秒后记录一行 `compat`。
 
 - `GameWorld::mainLoop_GPUSensitiveStuff`（每帧的工作）
 - `CharStats::setWeapon`、`_calculateWeaponWeightSpeedMultiplier`、`calculateAttackOrBlockSpeed`、`getMeleeAttack`、`_calculateBlockChance`、`getEquippedWeaponSkill`、`chooseAttack`（架势、速度、防守、招式选择）

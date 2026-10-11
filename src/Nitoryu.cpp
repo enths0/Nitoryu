@@ -47,10 +47,11 @@
 #include "Settings.h"
 #include "kit/diag.h"
 #include "Hooks.h"
+#include "Api.h"
 
 namespace
 {
-    const char* VERSION = "1.1.0";
+    const char* VERSION = "1.2.0";
     // The counts line: every 30 s in stage (tests), every 2 min in prod, so a short session still logs its counts.
     const DWORD COUNTS_STAGE_MS = 30000;
     const DWORD COUNTS_PROD_MS = 120000;
@@ -390,6 +391,7 @@ namespace
             { Timed t(SP_COST); emitCost(); }
             g_lastCounts = now;
         }
+        api::tick();    // after the settings were read: the addons' init once, then the queued events
     }
 }
 
@@ -402,6 +404,7 @@ static void startPluginBody()
     }
     cfg::init(stance::iniFile());       // the settings table and the ini; FCS joins after the game data loads
     stance::init();
+    api::init();        // the lock of the plugin API, before the first hook can queue an event
     diag::configure(stance::iniFile());   // [General] diag
     balance::applySettings();           // the curves ([Balance] overrides, FCS)
     readHotkey();
@@ -488,6 +491,7 @@ static void startPluginBody()
     feature(on, off, ui::iniOn() ? "ui" : "ui(ini)", button && ui::iniOn());
     feature(on, off, "marks", hud::installHooks());      // the marks on the portraits
     hooks::logSummary();                // one line for every hook row
+    api::start(VERSION);                // other plugins may ask from the first frame on
     // Logged under `RE_Kenshi:` because startPlugin runs inside the loader. A std::string, not a fixed
     // buffer: the line grows with the clip list, and sprintf_s ends the process on an overflow.
     std::string test;

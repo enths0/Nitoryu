@@ -14,6 +14,8 @@
 
 #include <string>
 
+#include "core/Pair.h"
+
 class Character;
 class Weapon;
 
@@ -39,9 +41,23 @@ namespace stance
         float overload;         // carried / capacity - 1 (0 = not overloaded)
         float dex;              // Dexterity, capped at 100
         bool offFromHip;        // the second blade is drawn from the hip (back + hip layout)
+        // A plugin's pair rule let this pair in (core::PluginAnswer; 0: Nitoryu's own rule), and its numbers for
+        // the pair: x the weight (already in weightDual), x attack speed, x block speed, x the second weapon's
+        // damage. 1 = Nitoryu's own balance.
+        int byPlugin;
+        float attackSpeedMul, blockSpeedMul, offDamageMul;
+    };
+    // The pair's speed factor for an attack or a block, with a plugin's number for the pair.
+    inline float speedOf(const Info& s, bool isBlock) { return s.speedFactor * (isBlock ? s.blockSpeedMul : s.attackSpeedMul); }
+
+    // What a plugin's pair rule answered (core::PluginAnswer) and its numbers for the pair, 1 each without one.
+    struct PairTuning
+    {
+        int answer;
+        float weight, attackSpeed, blockSpeed, offDamage;
     };
 
-    void init();                                   // lock, [Test] and [NPC] opt_in from Nitoryu.ini; after cfg::init
+    void init();                                   // lock, [Test], [NPC] opt_in, [Weapons] allow / refuse from the ini; after cfg::init
     void applySettings();                          // allow-list, speed caps, NPC mode from cfg (init, and after a change)
     std::string iniFile();                         // Nitoryu.ini next to the DLL
     // The game's attack/block speed x the dual factor, with bonuses capped at
@@ -50,18 +66,21 @@ namespace stance
     float applySpeed(float gameResult, float factor, bool isBlock, float capBonus = 0.0f);
     bool allowed(WeaponCategory c);
     std::string allowListText();
-    // Per-record levers (docs/FCS.md). A weapon's own WEAPON field `nitoryu dual wield` (0 = by its
-    // category, 1 = allowed whatever the category, 2 = refused) decides before the category list.
-    bool weaponAllowed(Weapon* w);
-    bool weaponRefused(Weapon* w);                 // its record says 2
+    // May these two weapons of this character fight as a pair (core/Pair.h has the order): the weapons' own
+    // WEAPON field `nitoryu dual wield` (0 = by its category, 1 = allowed whatever the category, 2 = refused; the
+    // same from the two weapon lists of Nitoryu.mod and [Weapons] allow / refuse in the ini), the category list,
+    // the character's any-weapon switch. Every caller that asks about a pair goes through it.
+    // The plugins' pair rules (Api.h) are asked first; `tuning`, when given, gets the numbers of the rule that
+    // let the pair in.
+    core::PairVerdict pairVerdict(Character* c, Weapon* a, Weapon* b, PairTuning* tuning = NULL);
+    // One weapon on its own: let in by its record or its category, and one-handed (left-hand fighting).
+    bool oneHandedAllowed(Weapon* w);
     // A player character's own switch (the second inventory button, saved as NIT_any_weapon):
     // blunt weapons and hackers pair for this character whatever the category list says. Heavy weapons,
     // polearms, bows, two-handed-only weapons and a record that says 2 stay out.
     bool anyWeapon(Character* c);
     bool toggleAnyWeapon(Character* c);            // returns the new state
     void setAnyWeapon(Character* c, bool on);      // from the save (Ambidex.cpp)
-    bool categoryAllowedFor(Character* c, WeaponCategory cat);
-    bool weaponAllowedFor(Character* c, Weapon* w);
     // The two carried weapons pair only with the switch on: the second button shows then (Ui.cpp).
     bool needsAnyWeapon(Character* c);
     // The character's RACE field `nitoryu rig`: 0 = the pose engine decides (mirror when the rig allows),
@@ -99,7 +118,7 @@ namespace stance
     Preview preview(Character* c);
     // The skill passed to the technique pool (min skill = DP gate): no more than the capped tier allows.
     float poolSkill(const Info& s);
-    // Re-read the NPC opt-in list (ini + the FCS record) after a game load.
+    // Re-read the NPC opt-in list (ini + the FCS record) and the weapon lists after a game load.
     void refreshOptIn();
 
     void prune(unsigned olderThanMs);              // forget characters not evaluated lately

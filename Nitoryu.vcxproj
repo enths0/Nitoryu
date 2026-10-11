@@ -81,6 +81,8 @@
     <ClCompile Include="src\Hud.cpp" />
     <ClCompile Include="src\Hooks.cpp" />
     <ClCompile Include="src\core\Math.cpp" />
+    <ClCompile Include="src\core\Pair.cpp" />
+    <ClCompile Include="src\Api.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Feedback.h" />
@@ -89,6 +91,10 @@
     <ClInclude Include="src\Hud.h" />
     <ClInclude Include="src\Hooks.h" />
     <ClInclude Include="src\core\Math.h" />
+    <ClInclude Include="src\core\Pair.h" />
+    <ClInclude Include="src\core\Ring.h" />
+    <ClInclude Include="src\Api.h" />
+    <ClInclude Include="src\api\NitoryuApi.h" />
     <ClInclude Include="src\Visual.h" />
     <ClInclude Include="src\Arms.h" />
     <ClInclude Include="src\Combat.h" />

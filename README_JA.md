@@ -204,10 +204,11 @@ FCS での調整項目を求める声が多かったので、Nitoryu の大部�
 
 1. **バランス。** 約 100 の設定が GLOBAL CONSTANTS に `nitoryu ...` フィールドとしてあります：道の重み、段位、全ての曲線、ペナルティ、速度、受け、圧迫、流水、無限、組み合わせのボーナス、NPC のルール。あなたの mod でフィールドを変えれば、その mod を使う全員に効きます。プレイヤーが自分の `Nitoryu.ini` で同じものを設定していれば、そちらが優先です。
 2. **技。** 二刀の技は、いくつかの `nitoryu` フィールドを持つ COMBAT_TECHNIQUE レコードです：何の技か（二の太刀の攻撃、双撃、止め、距離からの技）、クールダウン、距離、どのクリップを重ねるか。私の技もまさにこの方法で作っているので、一つコピーして変えてください。
-3. **武器。** WEAPON の `nitoryu dual wield` で、カテゴリに関係なく組み合わせに入れるか外すかを決めます。`nitoryu off hand damage` で二の太刀としてのダメージ、`nitoryu pair length` で組み合わせでの役割（長いか短いか）を変えます。
+3. **武器。** WEAPON の `nitoryu dual wield` で、カテゴリに関係なく組み合わせに入れるか外すかを決めます。`nitoryu off hand damage` で二の太刀としてのダメージ、`nitoryu pair length` で組み合わせでの役割（長いか短いか）を変えます。FCS Extended なしでは：WEAPON を「Nitoryu weapons allowed in a pair」か「Nitoryu weapons refused in a pair」の `weapons` リストに追加します（どの店も使わない商人リスト二つ）。プレイヤーは ini の `[Weapons] allow=` / `refuse=` で同じことができます。技の `nitoryu move weapons` で、その技がどの武器カテゴリ用かを決めます。
 4. **NPC。** CHARACTER か FACTION で `nitoryu dual wielder` にチェックを入れると、組み合わせを持っているときに二刀で戦います。能力の下限も段位の上限もなく、プレイヤーが `[NPC] dual=authored` にしていても有効です。古いやり方も使えます：小隊「Nitoryu dual wielders (opt-in list)」（出現しません）に追加するか、ini に `[NPC] opt_in=<string id>,<string id>`。普通の FCS で二刀流スキル（ステータス画面の数値）を設定するには、キャラクターか勢力を小隊「Nitoryu dual wielders (Dual Wielding 40 / 60 / 80 / 100)」のどれかに追加するか、そこでキャラクターの一つ目の値に正確な数値を入れます。これで二刀の達人に能力を盛る必要がなくなります。フィールド `nitoryu dual wielding` と ini の `[NPC] skill=<string id>:<value>` も同じです。能力に関係なく達人でなければならない NPC には、最低の道も設定してください：それらの小隊でのキャラクターの二つ目の値、フィールド `nitoryu path`、または `[NPC] path=<string id>:<value>`。
 5. **種族。** あなたのスケルトンで私の鏡写しがおかしく見えるときは、RACE に `nitoryu rig`：1 で二の太刀を左手の固定の握りにし、2 でその種族の Nitoryu をオフにします。
 6. **訓練。** 訓練用の BUILDING に `nitoryu pair dummy` を付けると、その `output rate` まで二刀流を鍛えます。
+7. **自作のプラグイン。** RE_Kenshi のプラグインを書くなら C++ API があります：キャラクターが二刀で戦っているか、段位、道、二刀流を問い合わせ、イベント（二の太刀の命中、受け、特殊技、段位の変化）を受け取り、自分の組み合わせのルール（どの二つの武器でも、重い武器も、自分の数値で）を追加できます。マニュアルはこのファイルの隣の `API.md`（ロシア語版：`API_RU.md`）、ヘッダは `NitoryuApi.h`、サンプルのアドオンはソースのリポジトリにあります。
 
 フィールドをツールチップ付きで FCS に表示するには FCS Extended が必要です（mod フォルダの `fcs.def` を読み込み、Second Life of Kenshi 自身のフィールドと同じように表示されます）。プレイヤーには不要です。マニュアルはこのファイルの隣の `FCS.md`（技の追加方法、全フィールド、私のレコード、普通の FCS での NPC の二刀流の設定方法。ロシア語版：`FCS_RU.md`）、設定の表は `FCS-settings.md`、全フィールドと説明は `fcs.def` にあります。ゲームデータ上ではスキルはまだ Ambidexterity、道は「DP」という名前です。
 
@@ -234,7 +235,7 @@ mod フォルダの `Nitoryu.ini` で、ゲーム起動時に読み込まれま�
 
 ## プラグイン作者の方へ：Nitoryu がフックするもの
 
-あなたのプラグインもこれらのどれかをフックしている場合、両方が動きます（フックはつながります）が、何か壊れたら教えてください。起動時に Nitoryu は、先に誰かがフックした対象ごとに `shared_hook target=...` を、プレイ 60 秒後に `compat` の行をログに書きます。
+プラグイン用の C++ API は `API.md` にあります。あなたのプラグインもこれらのどれかをフックしている場合、両方が動きます（フックはつながります）が、何か壊れたら教えてください。起動時に Nitoryu は、先に誰かがフックした対象ごとに `shared_hook target=...` を、プレイ 60 秒後に `compat` の行をログに書きます。
 
 - `GameWorld::mainLoop_GPUSensitiveStuff`（毎フレームの処理）
 - `CharStats::setWeapon`、`_calculateWeaponWeightSpeedMultiplier`、`calculateAttackOrBlockSpeed`、`getMeleeAttack`、`_calculateBlockChance`、`getEquippedWeaponSkill`、`chooseAttack`（構え、速度、守り、技の選択）

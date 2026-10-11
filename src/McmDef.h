@@ -217,6 +217,8 @@
     N("NPC", "opt_in", "a modder's lever: FCS") \
     N("NPC", "skill", "a modder's lever: FCS") \
     N("NPC", "path", "a modder's lever: FCS") \
+    N("Weapons", "allow", "a modder's lever: FCS") \
+    N("Weapons", "refuse", "a modder's lever: FCS") \
     N("OffHand", "bone", "fits the blade to the skeleton") \
     N("OffHand", "pos", "fits the blade to the skeleton") \
     N("OffHand", "rot", "fits the blade to the skeleton") \

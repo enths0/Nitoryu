@@ -63,6 +63,7 @@
     X("Balance.pressure_points") \
     X("Balance.tempo") \
     X("Balance.twin_share") \
+    X("Compat.addons") \
     X("Compat.foreign_control") \
     X("Compat.hold_ms") \
     X("Compat.plugins") \
@@ -231,7 +232,9 @@
     X("UI.button_tips") \
     X("UI.hotkey") \
     X("UI.toggle_button") \
+    X("Weapons.allow") \
     X("Weapons.categories") \
+    X("Weapons.refuse") \
 
 #define NITORYU_INI_LEGACY(X) \
     X("Test.l3_angled_left", "Animations.angled_block") \

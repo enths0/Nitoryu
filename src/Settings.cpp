@@ -534,6 +534,13 @@ namespace cfg
 
     const char* defaultText(Id id) { return valid(id) ? ROWS[id].def : ""; }
 
+    std::string valueText(Id id)
+    {
+        if (!valid(id))
+            return std::string();
+        return isText(ROWS[id].type) ? g_state.text[id] : numText(g_state.num[id]);
+    }
+
     Source source(Id id) { return valid(id) ? g_state.src[id] : DEFAULT; }
     const char* fcsKey(Id id) { return valid(id) ? ROWS[id].fcs : ""; }
 

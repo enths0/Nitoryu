@@ -6,7 +6,7 @@ most of Nitoryu is data, so a mod loaded after it can change the balance, add mo
 
 in the game data things keep their first names: the Path is "dual proficiency" (DP), Dual Wielding is "Ambidexterity" and a rank is a "tier". below I write DP and rank.
 
-next to this file: `fcs.def` (every field with its description) and `FCS-settings.md` (the table of all the settings).
+next to this file: `fcs.def` (every field with its description) and `FCS-settings.md` (the table of all the settings). if you write your own RE_Kenshi plugin, `API.md` is the C++ side.
 
 ## Seeing Nitoryu's fields in FCS
 
@@ -14,7 +14,7 @@ plain FCS doesn't read a mod's own `fcs.def`, so it won't show the `nitoryu ...`
 
 ## Settings: the balance
 
-134 settings are fields of the CONSTANTS record **GLOBAL CONSTANTS** (FCS: Game settings), all named `nitoryu ...`, in eighteen sections ("Nitoryu 00 main" to "Nitoryu 17 animations"). the full table with types and defaults is `FCS-settings.md`.
+135 settings are fields of the CONSTANTS record **GLOBAL CONSTANTS** (FCS: Game settings), all named `nitoryu ...`, in eighteen sections ("Nitoryu 00 main" to "Nitoryu 17 animations"). the full table with types and defaults is `FCS-settings.md`.
 
 - **The main switch (section 00, first in FCS):** `nitoryu only my strikes` (true). A fighter with two blades attacks only with my own strikes, each with its animation; vanilla swings and other mods' moves stay out. Out of reach the fighter walks in (no other mod's long dash); in reach with none of mine fitting, the game's pick stays. Set it to false in your mod to mix the game's swings and other mods' moves back in (mirrored onto the left arm). Your own dual-wield moves (below) count as "mine" here when they name one of my clips; a move of yours with its own animation needs this off. Player's key: `Nitoryu.ini [Main] only_my_strikes`, the first line of the ini and the first row of the settings menu.
 - **To change one for your mod or modpack:** in a mod loaded after Nitoryu, open GLOBAL CONSTANTS and edit the field. Only the fields you change are stored in your mod, the rest keep following Nitoryu.
@@ -71,6 +71,7 @@ Specials need rank 3 and Ambidexterity 50 as it counts in the fight (the setting
 | `nitoryu roll` | float | 1.0 | Finisher / opener: the chance 0-1 that it is used when everything else fits |
 | `nitoryu min gap` | float | 0 | Opener: the enemy is at least this far beyond the fighter's reach |
 | `nitoryu max gap` | float | 0 | Opener: and at most this far. While the move is ready the fighter engages from this distance |
+| `nitoryu move weapons` | text | empty | The weapon categories the move is for, comma separated: 0 katanas, 1 sabres, 2 blunt, 3 heavy, 4 hackers, 8 polearms. Only a pair whose two weapons are both in the list uses it. Empty = every pair. For moves made for one kind of pair, e.g. `1,3` for a plugin's heavy + sabre pair (counter `pick_skip_move_weapons`) |
 | `nitoryu timing from` | text | empty | The string id of the record it was cloned from: its speed and hit timing follow that record as loaded, so an animation pack that retimes the original carries over |
 
 **5. Changing my moves.** In a mod loaded after Nitoryu, open one of my records and edit: the Dash's cooldown (`nitoryu cooldown ms`), the spin's skill (`min skill`), which opener goes first (`chance`), or `nitoryu move = 0` / `disabled` to take a move out. A player's `Nitoryu.ini [Moves]` can still override the cooldown of the Dash, the spin and the big chop and the spin's skill for their own game. The big chop (`49-Nitoryu.mod`, the rank 1 strike that steps in from range) has `nitoryu cooldown ms` 7000: on its cooldown a fighter out of reach walks in instead.
@@ -95,7 +96,7 @@ fields on records of your own, or on vanilla ones overridden in your mod. all ar
 
 | Record | Field | Type | Default | What it does |
 |---|---|---|---|---|
-| WEAPON | `nitoryu dual wield` | int | 0 | This weapon in a two-weapon pair. 0 = by its category (the setting `nitoryu weapon categories`: katanas and sabres as shipped). 1 = allowed whatever its category. 2 = refused: a pair with it fights one-handed (log reason `weapon_refused`). Two-handed-only weapons are always refused, and the second weapon still needs a `bare sword` mesh. Left-hand fighting follows the same field |
+| WEAPON | `nitoryu dual wield` | int | 0 | This weapon in a two-weapon pair. 0 = by its category (the setting `nitoryu weapon categories`: katanas and sabres as shipped). 1 = allowed whatever its category. 2 = refused: a pair with it fights one-handed (log reason `weapon_refused`). Two-handed-only weapons are always refused, and the second weapon still needs a `bare sword` mesh. Left-hand fighting follows the same field. No FCS Extended: the two weapon lists below do the same |
 | WEAPON | `nitoryu off hand damage` | float | 1.0 | A multiplier on this weapon's damage when it strikes as the second blade, on top of the off-hand damage curve (counter `offhand_weapon_factor`) |
 | WEAPON | `nitoryu dual wielding xp` | float | 1.0 | Multiplier on the Dual Wielding XP a fighter gains while this weapon is in the pair; both weapons' values multiply. Above 1 makes a training weapon (wooden blades at 2.0 and almost no damage, for example), below 1 a weapon that teaches little (the log's `ambi` line has `weapon_mult`) |
 | WEAPON | `nitoryu pair length` | float | 0.0 | The blade length the pair rule reads instead of the weapon's own `length` (0 = its own). The shorter blade at most 0.80 of the longer = long + short (better parries). At least 0.90 = equal blades (more twin strikes). Set it when a weapon's `length` doesn't say what it is, e.g. 16 on a short blade with a long reach |
@@ -227,6 +228,21 @@ a SQUAD_TEMPLATE named **Nitoryu dual wielders (opt-in list)** that no town or f
 
 the four lists `23-Nitoryu.mod` to `26-Nitoryu.mod` (**Dual Wielding 40 / 60 / 80 / 100**) work the same way and also give that number. the plugin reads the lists after every game load. an NPC whose own record, or whose faction's record, is listed fights dual under `[NPC] dual=all` and `authored`, with no stat minimums and no `[NPC] max_tier` cap. players can do the same without FCS: `[NPC] opt_in=<string id>,<string id>` in `Nitoryu.ini`. the log's `npc_opt_in` line says how many ids were read, and `npc_record` lines show the record id a spawned NPC carries.
 
+### The weapon lists (`51-Nitoryu.mod`, `52-Nitoryu.mod`)
+
+two VENDOR_LIST records that no shop references, so they never stock anything: **Nitoryu weapons allowed in a pair** and **Nitoryu weapons refused in a pair**. they are the field `nitoryu dual wield` for plain FCS, where the field doesn't show:
+
+1. In your mod (loaded after Nitoryu), open the list and add your WEAPON records to **`weapons`**. The value FCS puts there doesn't matter.
+2. "allowed" = the weapon pairs whatever its category (the field's 1). "refused" = a pair with it fights one-handed (the field's 2, log reason `weapon_refused`).
+
+a two-handed weapon never pairs, in the list or not (heavy weapons, polearms, bows). the second weapon still needs a `bare sword` mesh. players can do the same without FCS: `[Weapons] allow=<string id>,<string id>` and `refuse=...` in `Nitoryu.ini`.
+
+who wins for one weapon: the ini, then the weapon's own field, then the lists; inside one of them a refusal wins. the plugin reads the lists after every game load. the log's `weapon_list` line says how many ids were read, the counters are `weapon_allowed_by_list` and `weapon_refused_by_list`.
+
+## Plugins
+
+another RE_Kenshi plugin can work with Nitoryu through its API: ask whether a character fights with two blades, its rank, Path and Dual Wielding, follow events (the second blade hit, a parry, a special, a rank change), and add a pair rule of its own. a pair rule is the only way a heavy weapon or a polearm gets into a pair, no field or list here does that. it is one C header, `NitoryuApi.h`, and the manual is `API.md`, both next to this file. the one setting on the data side is `nitoryu addons` (section 14, the player's `[Compat] addons`): off = no addon is called, for bug reports.
+
 ## What the plugin does with them (not FCS)
 
 - **Mirrored:** the whole body is mirrored at run time, so a right-hand vanilla swing becomes a left-hand one.
@@ -238,4 +254,4 @@ the four lists `23-Nitoryu.mod` to `26-Nitoryu.mod` (**Dual Wielding 40 / 60 / 8
 
 the game's own: WEAPON `bare sword` (the left-hand blade, a pair without it fights one-handed), `sheath`, `length`, `armour penetration`, `human damage mult`, `animal damage mult`, `robot damage mult`. COMBAT_TECHNIQUE `min skill`, `chance`, `1 handed`. CONSTANTS `GLOBAL CONSTANTS`: `base block chance`, `cut damage 1` / `99`, `blunt damage 1` / `99`, `damage multiplier`. SQUAD_TEMPLATE `11-Nitoryu.mod` and `23-` to `26-Nitoryu.mod`: their reference lists (the NPC opt-in and Dual Wielding, above).
 
-Nitoryu's own, declared in `fcs.def`: CONSTANTS `nitoryu ...` (134 settings). COMBAT_TECHNIQUE `nitoryu move`, `arms`, `clip`, `needs clip`, `echo`, `cooldown ms`, `weight`, `weight high`, `roll`, `min gap`, `max gap`, `timing from`. WEAPON `nitoryu dual wield`, `nitoryu off hand damage`, `nitoryu pair length`, `nitoryu dual wielding xp`. BUILDING `nitoryu pair dummy`. ARMOUR `nitoryu dual wielding cut`. CHARACTER and FACTION `nitoryu dual wielder`, `nitoryu dual wielding`, `nitoryu path`. RACE `nitoryu rig`. STATS `NIT_ambidexterity`.
+Nitoryu's own, declared in `fcs.def`: CONSTANTS `nitoryu ...` (135 settings). COMBAT_TECHNIQUE `nitoryu move`, `arms`, `clip`, `needs clip`, `echo`, `cooldown ms`, `weight`, `weight high`, `roll`, `min gap`, `max gap`, `timing from`. WEAPON `nitoryu dual wield`, `nitoryu off hand damage`, `nitoryu pair length`, `nitoryu dual wielding xp`. BUILDING `nitoryu pair dummy`. ARMOUR `nitoryu dual wielding cut`. CHARACTER and FACTION `nitoryu dual wielder`, `nitoryu dual wielding`, `nitoryu path`. RACE `nitoryu rig`. STATS `NIT_ambidexterity`.

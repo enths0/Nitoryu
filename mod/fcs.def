@@ -139,6 +139,7 @@ nitoryu foreign control: "auto" "Another plugin that plays swings, blocks and we
 nitoryu foreign control plugins: "ShoulderCombat.dll" "DLL file names, comma separated. With foreign control on auto, one of them loaded turns the giving way on."
 nitoryu foreign control hold ms: 6000 "After the other plugin's last swing or block, for this many milliseconds of game time the run animation waits for a steady run (run ms). A draw or a sheathe under its swing gets no animation, the blades follow at once."
 nitoryu foreign control run ms: 300 "In that time the run animation starts only after this many milliseconds of running without a stop."
+nitoryu addons: True "Other plugins may build on Nitoryu through its plugin API (docs/API.md): read a fighter's state, follow its events. Off = no such plugin is called and the API stays closed, to tell a problem of Nitoryu's from an addon's. Read once, at the start of the game."
 Nitoryu 15 marks:
 nitoryu marks: 1 "Marks that show the rank skills at work, without text. 0 = none, 1 = the characters the player has selected (and the enemies they press), 2 = all of the player's characters, 3 = every fighter."
 nitoryu marks place: 2 "Where the marks show: 2 = above the heads, 1 = on the squad portraits (all of the player's characters, whatever nitoryu marks says), 3 = both."
@@ -206,4 +207,5 @@ nitoryu weight high: -1.0 "The same at rank 3 and up; -1 = nitoryu weight. Nitor
 nitoryu roll: 1.0 "Finisher or opener: the chance 0-1 that it is used when everything else fits."
 nitoryu min gap: 0.0 "Opener: used only when the enemy is at least this far beyond the fighter's reach."
 nitoryu max gap: 0.0 "Opener: ... and at most this far. While the move is ready the fighter also engages from this distance."
+nitoryu move weapons: "" "Weapon categories this move is for, comma separated: 0 katanas, 1 sabres, 2 blunt, 3 heavy, 4 hackers, 8 polearms. The move is used only by a pair whose two weapons are both in the list. Empty = every pair. A plugin's move filter can overrule it."
 nitoryu timing from: "" "String id of the technique this record was cloned from. Its speed and hit timing then follow that record as the game loaded it, so an animation pack that retimes the original carries over. Empty = this record's own values."

@@ -260,6 +260,8 @@
       "After the other plugin's last swing or block, for this many milliseconds of game time the run animation waits for a steady run (run ms). A draw or a sheathe under its swing gets no animation, the blades follow at once.") \
     X(FOREIGN_RUN_MS, I, "300", "nitoryu foreign control run ms", "Nitoryu 14 other plugins", "Compat", "run_ms", \
       "In that time the run animation starts only after this many milliseconds of running without a stop.") \
+    X(ADDONS, B, "1", "nitoryu addons", "Nitoryu 14 other plugins", "Compat", "addons", \
+      "Other plugins may build on Nitoryu through its plugin API (docs/API.md): read a fighter's state, follow its events. Off = no such plugin is called and the API stays closed, to tell a problem of Nitoryu's from an addon's. Read once, at the start of the game.") \
     \
     X(HUD_MARKS, I, "1", "nitoryu marks", "Nitoryu 15 marks", "Marks", "marks", \
       "Marks that show the rank skills at work, without text. 0 = none, 1 = the characters the player has selected (and the enemies they press), 2 = all of the player's characters, 3 = every fighter.") \
