@@ -1,4 +1,5 @@
-#include "kit/input.h"
+// The hook manifest (Hooks.h).
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/diag.h"
 
@@ -20,12 +21,14 @@ namespace
         bool shared;
         const unsigned char* target;
         const unsigned char* detour;
-        bool chainOk;
+        bool chainOk;                   // right after the install, the target's jumps led to our detour
     };
     std::vector<Row> g_rows;
     int g_shared = 0;
     bool g_outerChecked = false;
 
+    // A target whose first bytes are a jump is probably hooked by another plugin already (or it is a
+    // native thunk).
     bool sharedTarget(const void* target)
     {
         const unsigned char* p = reinterpret_cast<const unsigned char*>(target);
@@ -34,6 +37,8 @@ namespace
         return p[0] == 0xE9 || (p[0] == 0xFF && p[1] == 0x25);
     }
 
+    // Where one jump at `p` leads (E9 rel32, or FF 25 rel32 through a pointer), NULL when `p` is no jump or
+    // cannot be read. Raw reads only, no C++ object in this frame (C2712), no lock anywhere near it.
     const unsigned char* hopOnce(const unsigned char* p)
     {
         __try
@@ -49,6 +54,7 @@ namespace
         return NULL;
     }
 
+    // The first address the jump chain from `target` reaches that is not a jump, or `detour` if it passes it.
     const unsigned char* chainEnd(const unsigned char* target, const unsigned char* detour)
     {
         const unsigned char* p = target;
@@ -78,6 +84,8 @@ namespace
         return slash == std::string::npos ? p : p.substr(slash + 1);
     }
 
+    // The rows whose loss matters most, named with an error line: Dual Wielding's growth (a plugin that replaces
+    // xpMelee) and the off-hand guard, pressure and flow (a plugin that replaces _iHitYouAreYouHit).
     bool tellPlayer(const char* symbol)
     {
         std::string s(symbol);
@@ -99,13 +107,13 @@ namespace hooks
             kit::Diag("shared_hook").kv("target", symbol).kv("first_byte", (int)p[0]).emit();
         }
         KenshiLib::HookStatus s = target != NULL ? KenshiLib::AddHook(target, detour, original) : KenshiLib::FAIL;
-
+        // AddHook's own status, and the original it wrote: a hook whose original is still NULL never chains.
         r.ok = s == KenshiLib::SUCCESS && original != NULL && *original != NULL;
         if (r.ok)
         {
             r.chainOk = chainEnd(r.target, r.detour) == r.detour;
             if (!r.chainOk)
-                kit::Diag("hook_chain_unknown").kv("target", symbol).emit();
+                kit::Diag("hook_chain_unknown").kv("target", symbol).emit();    // not checked later
         }
         g_rows.push_back(r);
         return r.ok ? KenshiLib::SUCCESS : KenshiLib::FAIL;
@@ -152,7 +160,7 @@ namespace hooks
             diag::count("hook_outer");
             kit::Diag("hook_outer").kv("target", r.symbol).kv("group", r.group)
                 .kv("by", by.empty() ? std::string("-") : by).emit();
-            if (tellPlayer(r.symbol))
+            if (tellPlayer(r.symbol))       // in the log only
                 kit::log::error(std::string("Nitoryu: ") + (by.empty() ? std::string("another plugin") : by) + " hooks "
                                 + r.symbol + " on top of Nitoryu; if Dual Wielding stops growing or the off-hand guard"
                                 " stops, put Nitoryu below that mod in the mod list.");

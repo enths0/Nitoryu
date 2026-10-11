@@ -1,4 +1,8 @@
-#include "kit/input.h"
+// Threads:
+//   cellUpdate_hook - main loop (MyGUI draws the portraits). Every widget call stays on the main loop.
+//   No lock: the marks read other modules' state through their own locked getters.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -13,7 +17,7 @@
 #include <kenshi/gui/ForgottenGUI.h>
 #include <kenshi/gui/MainBarGUI.h>
 #include <kenshi/gui/PortraitManager.h>
-#include <kenshi/gui/SquadManagementScreen.h>
+#include <kenshi/gui/SquadManagementScreen.h>   // PortraitData
 #include <kenshi/util/hand.h>
 
 #include <mygui/MyGUI.h>
@@ -42,7 +46,7 @@
 namespace
 {
     const char* const ROOT_NAME = "Nitoryu_hud";
-    const char* const LAYER = "Back";
+    const char* const LAYER = "Back";       // under the game's windows (data/gui/core/core_layer.xml)
     const char* const ICON_FLOW = "Nitoryu_mark_flow.png";
     const char* const ICON_MUGEN = "Nitoryu_mark_mugen.png";
     const char* const ICON_PIP = "Nitoryu_mark_pip.png";
@@ -50,40 +54,47 @@ namespace
     const char* const ICON_BAR = "Nitoryu_mark_bar.png";
     const size_t MAX_IMAGES = 96;
     const int MAX_PIPS = 10;
-
+    // the marks on a portrait: children of the cell's widget, found by name, never destroyed by us
+    // (the parent frees them)
     const char* const CELL_PREFIX = "Nitoryu_pm_";
     const int CELL_PIPS = 5;
-    const int BAR_STEPS = 8;
+    const int BAR_STEPS = 8;    // a portrait is asked to redraw when the flow bar moves one step
 
-    enum Place { PORTRAITS = 1, HEADS = 2 };
+    enum Place { PORTRAITS = 1, HEADS = 2 };    // cfg::HUD_PLACE is their sum
 
+    // The hover text. The marks take no mouse focus (a click on a portrait must still select the
+    // character), so the mouse is compared with their rectangles on the main loop and the text is a
+    // widget of ours on the top layer.
     enum Kind { FLOW, MUGEN, PRESSURE, KINDS };
     const char* const TIP_NAME = "Nitoryu_hud_tip";
     const char* const TIP_LAYER = "ToolTip";
-    const char* const TIP_SKIN = "Kenshi_FloatinglPanelSmallSkin";
+    const char* const TIP_SKIN = "Kenshi_FloatinglPanelSmallSkin";  // (sic) data/gui/skins/kenshi_skins.xml
     const char* const TIP_KEY[KINDS] = { "tip.flow", "tip.mugen", "tip.pressure" };
-
+    // The skin names no font and its own text colour is near black on a dark panel, so both are set
+    // here. Its text area starts 25 px in and 16 px down.
     const char* const TIP_FONT = "Kenshi_StandardFont_Small";
+
 
     struct Hot
     {
-        MyGUI::IntCoord at;
+        MyGUI::IntCoord at;     // on screen
         int kind;
     };
 
     volatile bool g_live = true;
-
+    // copies of the settings (cfg: the table < FCS < the ini), set by applySettings
+    // cfg::HUD_MARKS: 0 none, 1 the selected characters, 2 every player character, 3 every fighter
     int g_scope = 1;
-    int g_place = HEADS;
-    bool g_flow = true;
-    bool g_mugen = true;
-    bool g_pressure = true;
-    int g_size = 22;
-    float g_height = 24.0f;
-    bool g_onName = true;
+    int g_place = HEADS;        // cfg::HUD_PLACE
+    bool g_flow = true;         // cfg::HUD_FLOW
+    bool g_mugen = true;        // cfg::HUD_MUGEN
+    bool g_pressure = true;     // cfg::HUD_PRESSURE
+    int g_size = 22;            // cfg::HUD_SIZE: an icon's side above a head, in pixels; a pip is half of it
+    float g_height = 24.0f;     // cfg::HUD_HEIGHT: above the character's position, in game units
+    bool g_onName = true;       // cfg::HUD_ON_NAME: on top of the game's name label when it is shown
 
-    bool g_cellHook = false;
-    bool g_failed = false;
+    bool g_cellHook = false;    // PortraitMainCellView::update is hooked
+    bool g_failed = false;      // an exception from MyGUI or Ogre: the marks stay off for the session
 
     void failed(const char* where)
     {
@@ -94,16 +105,18 @@ namespace
 
     bool mine(Character* c) { return c != NULL && c->isPlayerCharacter(); }
     bool selected(Character* c) { return mine(c) && ou != NULL && ou->player != NULL && ou->player->isObjectSelected(c); }
-
+    // Above the heads: is this fighter one whose marks show?
     bool inScope(Character* c) { return g_scope >= 3 || (g_scope == 2 ? mine(c) : selected(c)); }
+
+    // ---- what to show, built once per tick on the main loop ---------------------------------------
 
     struct State
     {
-        float left;
-        bool chain;
-        int stacks;
+        float left;         // flow still to run (1..0), 0 = not in flow
+        bool chain;         // Mugen
+        int stacks;         // above a head: the pressure on this character; on a portrait: the most it holds on an enemy
         bool full;
-        hand who;
+        hand who;           // the map's key as a handle: the pointer may be gone by the next tick
 
         int signature() const
         {
@@ -129,12 +142,12 @@ namespace
         return it->second;
     }
 
-    States g_heads;
-    States g_portraits;
+    States g_heads;         // by the character the marks float above
+    States g_portraits;     // by the player character whose portrait carries them
 
-    std::vector<Hot> g_hotHeads;
-    std::map<Character*, std::vector<Hot> > g_hotCells;
-    bool g_tips = true;
+    std::vector<Hot> g_hotHeads;                            // this tick's marks above the heads
+    std::map<Character*, std::vector<Hot> > g_hotCells;     // the marks on a portrait, as last painted
+    bool g_tips = true;                                     // cfg::HUD_TIPS
 
     void gather()
     {
@@ -149,7 +162,7 @@ namespace
             for (size_t i = 0; i < v.size(); ++i)
             {
                 Character* c = v[i].who.getCharacter();
-
+                // active() also ends the flow of a fighter who went down
                 if (c == NULL || !flow::active(c))
                     continue;
                 float left = v[i].left < 0.02f ? 0.02f : v[i].left;
@@ -201,7 +214,7 @@ namespace
                 }
             }
         }
-
+        // A portrait redraws when the game asks; ask when what it shows has changed.
         if (gui != NULL && gui->mainbar != NULL)
         {
             for (States::iterator it = portraits.begin(); it != portraits.end(); ++it)
@@ -212,11 +225,13 @@ namespace
             }
             for (States::iterator it = g_portraits.begin(); it != g_portraits.end(); ++it)
                 if (portraits.find(it->first) == portraits.end())
-                    gui->mainbar->updatePortrait(it->second.who);
+                    gui->mainbar->updatePortrait(it->second.who);     // the last mark went
         }
         g_heads.swap(heads);
         g_portraits.swap(portraits);
     }
+
+    // ---- the marks on a squad portrait -------------------------------------------------------------
 
     MyGUI::ImageBox* cellImage(MyGUI::Widget* parent, const char* what, bool create)
     {
@@ -324,10 +339,12 @@ namespace
         }
     }
 
+    // ---- the marks above the heads -----------------------------------------------------------------
+
     struct Image
     {
         MyGUI::ImageBox* box;
-        const char* texture;
+        const char* texture;    // what it shows now (one of the constants above)
     };
 
     MyGUI::Widget* g_root = NULL;
@@ -336,6 +353,10 @@ namespace
     MyGUI::TextBox* g_tip = NULL;
     int g_tipKind = -1;
 
+    // The game destroys every widget when it goes back to the title screen; ours go with them. A root
+    // widget of ours is still alive only if MyGUI still lists it under our name. The address alone is not
+    // enough: MyGUI frees a destroyed widget at the next frame and a new widget (the game's, another mod's)
+    // can take the address; then g_images, children of the old root, would be written.
     bool alive(MyGUI::Widget* w, const char* name)
     {
         if (w == NULL)
@@ -376,6 +397,7 @@ namespace
             g_tip->setVisible(false);
     }
 
+    // The text for the mark under the mouse, next to the mouse.
     void tip()
     {
         if (!g_tips || gui == NULL || !gui->visible)
@@ -383,7 +405,7 @@ namespace
             hideTip();
             return;
         }
-
+        // a portrait's rectangles are good only while that fighter still has something to show
         for (std::map<Character*, std::vector<Hot> >::iterator it = g_hotCells.begin(); it != g_hotCells.end();)
         {
             if (g_portraits.find(it->first) == g_portraits.end())
@@ -488,13 +510,17 @@ namespace
             im.box->setVisible(true);
     }
 
+    // The game's name label over a character (Character::nameTag, a CharacterNameTag whose layout
+    // KenshiLib does not give): a visible text widget whose caption holds the name. Its height above the
+    // feet changes with the race, the pose and the zoom, so a fixed height drifts off it; the marks sit on
+    // its top instead.
     struct Label
     {
-        MyGUI::IntCoord at;
+        MyGUI::IntCoord at;     // the text on screen
         std::string caption;
     };
     std::vector<Label> g_labels;
-    bool g_labelsRead = false;
+    bool g_labelsRead = false;  // g_labels is this tick's
 
     void readLabels(MyGUI::EnumeratorWidgetPtr e, int depth)
     {
@@ -523,6 +549,7 @@ namespace
         }
     }
 
+    // The label with this name nearest to where the marks would sit without it (x, y), if one is close.
     bool nameLabel(Character* c, const MyGUI::IntSize& view, int x, int y, MyGUI::IntCoord& at)
     {
         if (!g_labelsRead)
@@ -558,6 +585,9 @@ namespace
         return true;
     }
 
+    // The same sum as UtilityT::worldToScreenRel: the point less the scene's relative origin, through the
+    // camera's view matrix (in front of the camera = negative z), then through its projection matrix; the
+    // result is -1..1 with y up.
     bool toScreen(Ogre::Camera* cam, Ogre::SceneManager* scene, const MyGUI::IntSize& view, const Ogre::Vector3& world, int& x, int& y)
     {
         Ogre::Vector3 eye = cam->getViewMatrix() * (world - scene->getRelativeOrigin());
@@ -618,7 +648,7 @@ namespace
             else
                 diag::count("hud_at_height");
             int y = hy;
-
+            // the fighter's own state: flow and Mugen side by side, the flow bar under them
             int icons = (h.left > 0.0f ? 1 : 0) + (h.chain ? 1 : 0);
             if (icons > 0)
             {
@@ -639,7 +669,7 @@ namespace
                 }
                 y -= gap;
             }
-
+            // the pressure on this character: one pip per stack
             if (h.stacks > 0)
             {
                 int n = h.stacks > MAX_PIPS ? MAX_PIPS : h.stacks;
@@ -688,7 +718,7 @@ namespace hud
     {
         if (g_failed)
             return;
-
+        // MyGUI and Ogre throw; an exception costs the marks, not the game (as in Ui.cpp).
         try
         {
             if (g_root != NULL && !rootAlive())

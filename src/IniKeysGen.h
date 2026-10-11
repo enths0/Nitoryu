@@ -1,3 +1,5 @@
+// GENERATED from the settings table (do not edit): every Nitoryu.ini key the plugin reads, "Section.key", and the
+// [Test] legacy clip keys with the [Animations] key that replaced them.
 #pragma once
 
 #define NITORYU_INI_KEYS(X) \
@@ -5,6 +7,7 @@
     X("Animations.angled_block_swap") \
     X("Animations.back_guard") \
     X("Animations.beat_cut") \
+    X("Animations.big_chop") \
     X("Animations.cross_finisher") \
     X("Animations.dash_slash") \
     X("Animations.double_chop") \
@@ -12,6 +15,7 @@
     X("Animations.dual_chiburi") \
     X("Animations.dual_cut") \
     X("Animations.dual_draw") \
+    X("Animations.dual_draw_hold") \
     X("Animations.dual_sheathe") \
     X("Animations.dual_sheathe_main_blade") \
     X("Animations.fan_sweep") \
@@ -23,21 +27,31 @@
     X("Animations.limp_arm_swing") \
     X("Animations.main_block") \
     X("Animations.main_block_single") \
+    X("Animations.main_chop") \
     X("Animations.main_hand_cut") \
+    X("Animations.main_level_cut") \
+    X("Animations.main_short_cut") \
     X("Animations.off_backhand") \
+    X("Animations.off_belly_cut") \
     X("Animations.off_hand_cut") \
+    X("Animations.off_high_cut") \
     X("Animations.off_leg_cut") \
     X("Animations.off_rising_cut") \
+    X("Animations.off_shoulder_cut") \
     X("Animations.offhand_block") \
     X("Animations.offhand_block_style") \
     X("Animations.one_two") \
     X("Animations.run_hold") \
     X("Animations.run_hold_free_weight") \
+    X("Animations.run_style") \
     X("Animations.scissor_block") \
     X("Animations.sheathe_yields_to_jobs") \
     X("Animations.spin") \
     X("Animations.three_cuts") \
+    X("Animations.twin_body_cut") \
+    X("Animations.twin_shear") \
     X("Animations.twin_sweep") \
+    X("Animations.two_step") \
     X("Animations.x_cut") \
     X("Animations.yield_to_reactions") \
     X("Balance.counter_chance") \
@@ -81,6 +95,7 @@
     X("LeftHand.enabled") \
     X("LeftHand.min_ambidexterity") \
     X("LeftHand.speed_at_min") \
+    X("Main.only_my_strikes") \
     X("Marks.0") \
     X("Marks.1") \
     X("Marks.flow") \
@@ -93,6 +108,7 @@
     X("Marks.size") \
     X("Marks.tips") \
     X("Moves.1") \
+    X("Moves.big_chop_cooldown_ms") \
     X("Moves.cross_arm_ms") \
     X("Moves.cross_riposte") \
     X("Moves.cross_riposte_chance") \
@@ -103,6 +119,7 @@
     X("Moves.even_picks") \
     X("Moves.far_pick_gap") \
     X("Moves.long_dash_shared_cooldown") \
+    X("Moves.main_move_share") \
     X("Moves.mirror_long_dash") \
     X("Moves.no_repeat") \
     X("Moves.offhand_carry") \
@@ -225,7 +242,7 @@
     X("Test.l3_back_guard_high_main", "Animations.back_guard") \
     X("Test.l3_back_guard_low", "Animations.back_guard") \
     X("Test.l3_back_guard_low_main", "Animations.back_guard") \
-    X("Test.l3_beat_cut", "Animations.beat_cut") \
+    X("Test.l3_big_chop", "Animations.big_chop") \
     X("Test.l3_block", "Animations.high_block") \
     X("Test.l3_chiburi", "Animations.dual_chiburi") \
     X("Test.l3_cross", "Animations.x_cut") \
@@ -234,20 +251,23 @@
     X("Test.l3_draw", "Animations.dual_draw") \
     X("Test.l3_dual_block", "Animations.dual_block") \
     X("Test.l3_dual_cut", "Animations.dual_cut") \
-    X("Test.l3_fan_sweep", "Animations.fan_sweep") \
     X("Test.l3_figure_eight", "Animations.figure_eight") \
     X("Test.l3_head_wrap", "Animations.head_wrap") \
     X("Test.l3_hit_taken", "Animations.hit_taken") \
     X("Test.l3_main_block", "Animations.main_block_single") \
+    X("Test.l3_main_chop", "Animations.main_chop") \
     X("Test.l3_main_hand_cut", "Animations.main_hand_cut") \
+    X("Test.l3_main_level_cut", "Animations.main_level_cut") \
     X("Test.l3_main_overhead", "Animations.main_block") \
     X("Test.l3_main_overhead_impact", "Animations.main_block") \
+    X("Test.l3_main_short_cut", "Animations.main_short_cut") \
     X("Test.l3_off_backhand", "Animations.off_backhand") \
+    X("Test.l3_off_belly_cut", "Animations.off_belly_cut") \
     X("Test.l3_off_hand_cut", "Animations.off_hand_cut") \
+    X("Test.l3_off_high_cut", "Animations.off_high_cut") \
     X("Test.l3_off_leg_cut", "Animations.off_leg_cut") \
-    X("Test.l3_off_rising", "Animations.off_rising_cut") \
+    X("Test.l3_off_shoulder_cut", "Animations.off_shoulder_cut") \
     X("Test.l3_offhand_block", "Animations.offhand_block") \
-    X("Test.l3_offhand_block_fwd", "Animations.offhand_block") \
     X("Test.l3_one_two", "Animations.one_two") \
     X("Test.l3_run", "Animations.run_hold") \
     X("Test.l3_scissor", "Animations.scissor_block") \
@@ -259,4 +279,10 @@
     X("Test.l3_stance_kenshi", "Animations.idle_stances") \
     X("Test.l3_stance_ronin", "Animations.idle_stances") \
     X("Test.l3_three_cuts", "Animations.three_cuts") \
+    X("Test.l3_twin_body_cut", "Animations.twin_body_cut") \
+    X("Test.l3_twin_shear", "Animations.twin_shear") \
     X("Test.l3_twin_sweep", "Animations.twin_sweep") \
+    X("Test.l3_two_step", "Animations.two_step") \
+    X("Test.only_our_animations", "Main.only_my_strikes") \
+
+// (the blank line above ends the macro)

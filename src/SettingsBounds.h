@@ -1,3 +1,13 @@
+// Nitoryu's settings: the range of each number.
+//
+// A value from FCS or the ini outside its range is clamped to it and logged once (`setting_clamped`); a value
+// that is not a number at all (nan, inf) falls back to the default. The ranges keep a setting meaningful (a
+// chance in 0-1, a time not below 0, a tier 0-6 where 6 = never); they are never a cap on a skill or a stat,
+// and they stay wide where a modder may want an odd value (a tier requirement above 100 = never reached).
+// For a curve (C) the range is for its values, not its DP points; for a list (L) for each number.
+// Every F, I, C and L row of SettingsDef.h has one line here. docs/FCS-settings.md shows the ranges.
+//
+// X(id, lowest, highest)
 #pragma once
 
 #define NITORYU_ANY 1.0e9
@@ -53,6 +63,7 @@
     X(PRESSURE_SHOUT_STACKS, 0, NITORYU_ANY) \
     X(SPECIAL_MIN_AMBI, 0, NITORYU_ANY) \
     X(DOUBLE_HIT_COOLDOWN_MS, 0, NITORYU_ANY) \
+    X(MAIN_MOVE_SHARE, 0, 1) \
     X(CROSS_RIPOSTE_CHANCE, 0, 1) \
     X(OFF_CARRY_MS, 0, NITORYU_ANY) \
     X(FAR_PICK_GAP, 0, NITORYU_ANY) \
@@ -102,6 +113,7 @@
     X(AMB_XP_HIT_TAKEN, 0, NITORYU_ANY) \
     X(FOREIGN_HOLD_MS, 0, NITORYU_ANY) \
     X(FOREIGN_RUN_MS, 0, NITORYU_ANY) \
+    X(RUN_STYLE, 0, 4) \
     X(HUD_MARKS, 0, 3) \
     X(HUD_PLACE, 1, 3) \
     X(HUD_SIZE, 8, 64) \

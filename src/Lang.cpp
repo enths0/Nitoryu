@@ -1,4 +1,4 @@
-#include "kit/input.h"
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 
@@ -13,7 +13,7 @@
 
 namespace
 {
-
+    // Built-in English: the last fallback, identical to lang\en.ini.
     struct Default
     {
         const char* key;
@@ -122,10 +122,11 @@ namespace
             out.append(buf, n);
         fclose(f);
         if (out.size() >= 3 && (unsigned char)out[0] == 0xEF && (unsigned char)out[1] == 0xBB && (unsigned char)out[2] == 0xBF)
-            out.erase(0, 3);
+            out.erase(0, 3);                          // tolerate a UTF-8 BOM
         return true;
     }
 
+    // key=value lines; `;` / `#` comments and [sections] ignored. Returns keys read.
     int load(const std::string& path)
     {
         std::string data;
@@ -160,6 +161,9 @@ namespace
         return dirOf(std::string(path));
     }
 
+    // `language=ru_RU` in Kenshi\settings.cfg -> "ru". A Workshop copy sits outside Kenshi\mods, so the
+    // file is looked for in the current directory (the game folder) first, then next to the exe and its
+    // parent, then two folders above the mod.
     std::string gameLanguage(const std::string& kenshiDir, std::string& used)
     {
         char cwd[MAX_PATH] = { 0 };
@@ -189,9 +193,9 @@ namespace lang
     {
         for (size_t i = 0; i < sizeof(DEFAULTS) / sizeof(DEFAULTS[0]); ++i)
             g_text[DEFAULTS[i].key] = DEFAULTS[i].text;
-        std::string ini = stance::iniFile();
+        std::string ini = stance::iniFile();                // ...\mods\Nitoryu\Nitoryu.ini
         std::string modDir = dirOf(ini);
-        std::string kenshiDir = dirOf(dirOf(modDir));
+        std::string kenshiDir = dirOf(dirOf(modDir));       // ...\Kenshi
         char want[32] = { 0 };
         GetPrivateProfileStringA("General", "language", "auto", want, sizeof(want), ini.c_str());
         std::string code = want;
@@ -214,9 +218,16 @@ namespace lang
         std::map<std::string, std::string>::iterator it = g_text.find(key);
         if (it != g_text.end())
             return it->second;
-
+        // Read-only after init (combat hooks call this off the main thread):
+        // an unknown key is a programming error, shown as "?".
         static const std::string missing("?");
         return missing;
+    }
+
+    const std::string* find(const char* key)
+    {
+        std::map<std::string, std::string>::iterator it = g_text.find(key);
+        return it != g_text.end() ? &it->second : NULL;
     }
 
     const std::string& code() { return g_code; }

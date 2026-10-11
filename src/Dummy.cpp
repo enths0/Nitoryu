@@ -1,4 +1,9 @@
-#include "kit/input.h"
+// The pair dummy (Dummy.h).
+// Threads:
+//   operate_hook, xpTraining_hook - the training building's use; xpTraining acts only inside our operate on
+//   the same thread (thread-local t_trainee). No lock: no state shared across threads.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -27,8 +32,9 @@
 namespace
 {
     volatile bool g_enabled = true;
-    bool g_on = true;
+    bool g_on = true;               // cfg::DUMMY_ON ([Training] pair_dummy)
 
+    // operate calls xpTraining on the same thread: the character on a pair dummy right now.
     __declspec(thread) Character* t_trainee = NULL;
 
     bool finite(float v) { return v == v && v > -1.0e6f && v < 1.0e6f; }
@@ -49,14 +55,15 @@ namespace
             diag::count("dummy_no_pair");
             return;
         }
-
+        // The game's own amount and cap, on Dual Wielding instead of the building's stat.
         float a = ambidex::stored(c);
         float next = a;
         xpTraining_orig(self, time, mult, next, upperLimit, which);
         if (!finite(next) || !(next > a))
         {
             diag::count(a >= upperLimit ? "dummy_at_cap" : "dummy_no_gain");
-
+            // Say why, once per character. With [Test] ambidexterity the stats window shows the override,
+            // not this stored value.
             static Character* said = NULL;
             if (said != c && diag::takeDetail())
             {
@@ -87,11 +94,13 @@ namespace
         t_trainee = who;
         operate_orig(self, who, t);
         t_trainee = prev;
-
+        // the bar under the dummy: progress to the next level of Dual Wielding, not of the building's stat
         float a = stance::hasPair(who) ? ambidex::stored(who) : 0.0f;
         self->progressBarLevel = finite(a) && a > 0.0f ? a - (float)(int)a : 0.0f;
     }
 
+    // The dummies and their researches are records of Nitoryu.mod with English names; the texts of
+    // lang\<code>.ini go over them.
     void setText(GameData* d, const char* field, const std::string& v)
     {
         boost::unordered_map<std::string, std::string>::iterator it = d->sdata.find(field);
@@ -117,7 +126,7 @@ namespace
             {
                 b->name = lang::text(KEYS[i][0]);
                 setText(b, "Description", lang::text(KEYS[i][1]));
-                setText(b, "building group", lang::text("dummy.group"));
+                setText(b, "building group", lang::text("dummy.group"));   // the build menu lists the group
                 ++done;
             }
             GameData* r = ou->gamedata.getData(RESEARCH[i]);
@@ -153,7 +162,7 @@ namespace dummy
                                      &xpTraining_orig) == KenshiLib::SUCCESS;
         if (!ok)
             kit::log::error("Nitoryu: could not hook CharStats::xpTraining");
-
+        // Without the stat swap a pair dummy would train its building's own stat: hook operate only with it.
         ok = ok && hooks::add("UseableStuff::operate", "dummy", KenshiLib::GetRealAddress(&UseableStuff::_NV_operate), operate_hook,
                                       &operate_orig) == KenshiLib::SUCCESS;
         if (!ok)

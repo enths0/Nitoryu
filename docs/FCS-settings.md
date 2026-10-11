@@ -13,6 +13,12 @@ points, flat outside); **list** = text `a,b,c`; **text**.
 Range: a value outside it is clamped to it, and the log says so once (`setting_clamped`); for a curve it is
 the range of the values, for a list of each number.
 
+## Nitoryu 00 main
+
+| FCS field | Type | Default | Range | Nitoryu.ini | What it does |
+|---|---|---|---|---|---|
+| `nitoryu only my strikes` | bool | `1` |  | `[Main] only_my_strikes` | A fighter with two blades attacks only with Nitoryu's own strikes (each with its animation switch on): no vanilla swing, no other mod's move. Out of reach the fighter walks in; in reach with none of them fitting, the game's pick stays. Off = the game's swings and other mods' moves are mixed in, mirrored onto the left arm. |
+
 ## Nitoryu 01 dual proficiency
 
 | FCS field | Type | Default | Range | Nitoryu.ini | What it does |
@@ -32,7 +38,7 @@ the range of the values, for a list of each number.
 
 | FCS field | Type | Default | Range | Nitoryu.ini | What it does |
 |---|---|---|---|---|---|
-| `nitoryu curve off hand share` | curve | `20:0.03,40:0.10,60:0.18,75:0.30,85:0.40,90:0.50,100:0.55` | 0-1 | `[Balance] off_hand_share` | Curve DP:value. Share of attacks that use the second blade (an off-hand strike or a twin strike). |
+| `nitoryu curve off hand share` | curve | `20:0.20,40:0.23,60:0.26,75:0.30,85:0.40,90:0.50,100:0.55` | 0-1 | `[Balance] off_hand_share` | Curve DP:value. Share of attacks that use the second blade (an off-hand strike or a twin strike). |
 | `nitoryu curve twin share` | curve | `59.99:0,60:0.25,100:0.45` | 0-1 | `[Balance] twin_share` | Curve DP:value. Of the second blade's attacks, the share that are twin strikes (both blades). |
 | `nitoryu curve off hand damage` | curve | `20:1.04,40:1.14,70:1.30` | 0 or more | `[Balance] off_hand_damage` | Curve DP:value. Damage of a second-blade strike, x the second weapon's own damage. |
 | `nitoryu curve off hand guard` | curve | `39.99:0,40:0.20,60:0.30,75:0.40,90:0.50,100:0.55` | 0-1 | `[Balance] off_hand_guard` | Curve DP:value. Base chance that the second blade parries a hit the main blade missed. |
@@ -103,6 +109,7 @@ the range of the values, for a list of each number.
 | `nitoryu double hit cooldown ms` | int | `5000` | 0 or more | `[Moves] double_hit_cooldown_ms` | After a move that hits with both blades the next one waits this many milliseconds of game time. 0 = no cooldown. |
 | `nitoryu no repeat` | bool | `1` |  | `[Moves] no_repeat` | The second blade does not use the same move twice in a row when another one fits. |
 | `nitoryu even picks` | bool | `1` |  | `[Moves] even_picks` | Of the second blade's moves that come up for a pick, the fighter takes the one it has used least, so every move is seen about as often. Off: the first that comes up, by the game's own weights. |
+| `nitoryu main move share` | float | `0.6` | 0-1 | `[Moves] main_move_share` | Of the picks the second blade does not take, this share 0-1 is a strike of the right blade with its own animation (a record whose use R arm is on and use L arm off), the least played first; the rest are the game swings. 0 = only the game swings. |
 | `nitoryu cross riposte chance` | float | `0.25` | 0-1 | `[Moves] cross_riposte_chance` | Chance that the answer to a block or a parry is the X cut (the riposte finisher); otherwise it is an ordinary riposte. |
 | `nitoryu off hand carry` | bool | `1` |  | `[Moves] offhand_carry` | A second-blade turn that found no move in reach waits for the next attack instead of being lost. |
 | `nitoryu off hand carry ms` | int | `3000` | 0 or more |  | How long such a turn waits, in milliseconds of game time. |
@@ -227,4 +234,5 @@ the range of the values, for a list of each number.
 | FCS field | Type | Default | Range | Nitoryu.ini | What it does |
 |---|---|---|---|---|---|
 | `nitoryu run hold free weight` | float | `0.5` | 0-1 | `[Animations] run_hold_free_weight` | The two-blade run draws the arms and the torso over the legs of the run that is playing. When it cannot keep in step with that run (another mod's run animation), the torso takes only this share of the pose, 0-1: 0 = the torso is left to the other run, 1 = fully ours. The arms always take it in full. |
+| `nitoryu run style` | int | `3` | 0-4 | `[Animations] run_style` | Which run a dual fighter shows (while [Animations] run_hold is on): 0 = both blades trailing over the game legs, 1 = stance 1 (the left arm thrown back, its blade trailing low), 2 = stance 2 (the right blade dragging behind, the left at the shoulder), 3 = stance 3 (the right blade reversed along the back, the left out to the right), 4 = stance 1 or 3, drawn once per fighter. Stances 1-3 move the whole body, legs included, in step with the game run; over another mod run they give way to 0. |
 | `nitoryu yield to reactions` | bool | `1` |  | `[Animations] yield_to_reactions` | While the game plays a stagger, a knockdown, a knockout or a get-up on a dual fighter, the dual pose steps aside and that animation shows, the game's own or another mod's. Off: the dual pose stays on the upper body through it. |

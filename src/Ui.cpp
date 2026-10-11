@@ -1,4 +1,20 @@
-#include "kit/input.h"
+// The stance toggle as a button in the inventory window.
+//
+// A small icon sits in the top-right corner of the "back" weapon section of a
+// player character who carries a pair: two crossed blades = the stance is on,
+// one grey blade = off. A click toggles it, the character says the line, and
+// the state is saved with the character (Ambidex.cpp, NIT_dual_off).
+// A second button to its left shows when the two carried weapons pair only with the character's
+// any-weapon switch (blunt, hackers): a blade crossed with a club, grey = off. Saved the same way
+// (NIT_any_weapon). The mouse over a button shows what it does ([UI] button_tips).
+// How: an InventoryGUI::refreshSection post-hook; the button is owned by the section widget and never
+// destroyed by us (the parent frees it; a second destroy is a double free); the icons are found once
+// the mod folder is an Ogre location in every resource group.
+// Threads:
+//   refreshSection_hook - main loop (the inventory window). Every widget call stays on the main loop.
+//   No lock: the stance state it shows is read through stance::, which locks.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -25,7 +41,7 @@
 
 namespace
 {
-    const size_t OFF_INVGUI_SECTIONS = 0x60;
+    const size_t OFF_INVGUI_SECTIONS = 0x60;   // InventoryGUI::inventorySections (KenshiLib 0.5.0)
     typedef std::map<std::string, InventorySectionGUI*> SectionGuiMap;
 
     const char* const BUTTON_PREFIX = "Nitoryu_toggle_";
@@ -34,27 +50,28 @@ namespace
     const char* const ANY_PREFIX = "Nitoryu_any_";
     const char* const ICON_ANY_ON = "Nitoryu_any_weapon.png";
     const char* const ICON_ANY_OFF = "Nitoryu_any_weapon_off.png";
-    const int BUTTON_DEPTH = -1;
+    const int BUTTON_DEPTH = -1;    // MyGUI: among siblings the smaller depth is drawn on top (the default is 0)
 
-    bool g_enabled = true;
-    bool g_anyEnabled = true;
-    volatile bool g_live = true;
-    int g_size = 22;
+    bool g_enabled = true;          // [UI] toggle_button
+    bool g_anyEnabled = true;       // [UI] any_weapon_button
+    volatile bool g_live = true;    // false when Nitoryu is turned off at run time
+    int g_size = 22;                // [UI] button_size
     std::string g_skin = "Kenshi_Button1";
     std::string g_dir;
     bool g_locationAdded = false;
 
     std::map<MyGUI::Widget*, InventoryGUI*> g_buttons;
 
+    // The hover text: a widget of our own on the tooltip layer, as the marks' (Hud.cpp).
     const char* const TIP_NAME = "Nitoryu_ui_tip";
     const char* const TIP_LAYER = "ToolTip";
-    const char* const TIP_SKIN = "Kenshi_FloatinglPanelSmallSkin";
-    const char* const TIP_FONT = "Kenshi_StandardFont_Small";
+    const char* const TIP_SKIN = "Kenshi_FloatinglPanelSmallSkin";  // (sic) data/gui/skins/kenshi_skins.xml
+    const char* const TIP_FONT = "Kenshi_StandardFont_Small";       // the skin sets no font
     const char* const TIP_STANCE = "tip.stance_button";
     const char* const TIP_ANY = "tip.any_weapon_button";
     const int TIP_PAD_X = 25, TIP_PAD_Y = 16;
 
-    bool g_tips = true;
+    bool g_tips = true;             // [UI] button_tips
     bool g_tipFailed = false;
     MyGUI::TextBox* g_tip = NULL;
     const char* g_tipKey = NULL;
@@ -76,7 +93,9 @@ namespace
         if (g_locationAdded)
             return;
         g_locationAdded = true;
-
+        // MyGUI searches its own resource group, whose name Kenshi does not publish, and KenshiLib's
+        // headers do not declare MyGUI::OgreDataManager to ask for it: so the folder is added to every
+        // group. Guarded: an Ogre exception costs the icons, not the game.
         try
         {
             Ogre::ResourceGroupManager& rgm = Ogre::ResourceGroupManager::getSingleton();
@@ -120,6 +139,9 @@ namespace
 
     void ensureButton(InventoryGUI* gui, InventorySection* section);
 
+    // MyGUI throws (a widget the game freed, a bad cast), and an exception out of a click delegate or the
+    // refreshSection hook would end the game. The first one turns the buttons off for the session and is
+    // logged once; the game's own inventory goes on.
     bool g_uiFailed = false;
 
     void uiFault(const char* where, const char* what)
@@ -142,7 +164,7 @@ namespace
         feedback::say(c, lang::text(on ? "speech.any_weapon" : "speech.blades_only").c_str(), 0);
         diag::count(on ? "ui_any_weapon_on" : "ui_any_weapon_off");
         kit::Diag("any_weapon").kv("who", c->displayName).kv("on", on).kv("pair", stance::hasPair(c)).emit();
-
+        // The stance button follows at once: it shows only for a pair, and the pair just changed.
         Inventory* inv = c->getInventory();
         InventorySection* back = inv != NULL ? inv->getSection(std::string("back")) : NULL;
         if (back != NULL)
@@ -156,7 +178,7 @@ namespace
             return;
         bool on = stance::togglePlayer(c);
         paint(sender, on ? ICON_ON : ICON_OFF);
-
+        // Said from the main loop (feedback::flush), like every other line.
         feedback::say(c, lang::text(on ? "speech.two_blades" : "speech.one_blade").c_str(), 0);
         diag::count(on ? "ui_toggle_on" : "ui_toggle_off");
         kit::Diag("toggle").kv("who", c->displayName).kv("dual_allowed", on).kv("from", "button").emit();
@@ -180,6 +202,7 @@ namespace
         catch (...) { uiFault("any-weapon button click", "unknown exception"); }
     }
 
+    // One button of the section: found by name or created, `slot` buttons in from the right edge.
     void ensureOne(InventoryGUI* gui, MyGUI::Widget* parent, const char* prefix, int slot, bool show, const char* texture,
                    void (*click)(MyGUI::Widget*))
     {
@@ -197,7 +220,7 @@ namespace
             if (!show)
                 return;
             addIconLocation();
-
+            // Owned by `parent`: never destroyed by us.
             button = parent->createWidget<MyGUI::Button>(g_skin, MyGUI::IntCoord(parent->getWidth() - (slot + 1) * g_size - slot * 2, 0, g_size, g_size),
                                                          MyGUI::Align::Right | MyGUI::Align::Top, name);
             button->eventMouseButtonClick += MyGUI::newDelegate(click);
@@ -207,7 +230,8 @@ namespace
             icon->setNeedMouseFocus(false);
             diag::count("ui_button_created");
         }
-
+        // When the window opens again the game adds the weapon's picture anew, as a later sibling, and
+        // draws it over our button. A smaller depth keeps ours above every later sibling.
         if (button->getDepth() != BUTTON_DEPTH)
         {
             button->setDepth(BUTTON_DEPTH);
@@ -234,12 +258,12 @@ namespace
         }
         MyGUI::Widget* parent = it->second->getWidget();
         bool on = stance::playerAllowed(c);
-        bool show = g_live && (stance::hasPair(c) || !on);
+        bool show = g_live && (stance::hasPair(c) || !on);   // an "off" character can always turn it back on
         ensureOne(gui, parent, BUTTON_PREFIX, 0, show, on ? ICON_ON : ICON_OFF, &onClick);
         if (!g_anyEnabled)
             return;
         bool any = stance::anyWeapon(c);
-
+        // An "on" character can always turn it back off, whatever it carries now.
         ensureOne(gui, parent, ANY_PREFIX, 1, g_live && (any || stance::needsAnyWeapon(c)), any ? ICON_ANY_ON : ICON_ANY_OFF,
                   &onAnyClick);
     }
@@ -252,19 +276,20 @@ namespace
         if (g_enabled && !g_uiFailed && self != NULL && section != NULL)
         {
             hc.ours();
-            try { ensureButton(self, section); }
+            try { ensureButton(self, section); }        // after the original, so the game's window is whole
             catch (const std::exception& e) { uiFault("inventory button", e.what()); }
             catch (...) { uiFault("inventory button", "unknown exception"); }
         }
     }
 
+    // The game destroys every widget when it goes back to the title screen; ours go with them.
     bool tipAlive()
     {
         MyGUI::EnumeratorWidgetPtr e = MyGUI::Gui::getInstance().getEnumerator();
         while (e.next())
             if (e.current() == g_tip)
             {
-
+                // a new widget at a freed address is not ours
                 if (g_tip->getName() == TIP_NAME)
                     return true;
                 diag::count("ui_widget_address_reused");
@@ -273,6 +298,8 @@ namespace
         return false;
     }
 
+    // Which of the two buttons the mouse is over. The widget under the mouse is alive, so it is asked by
+    // its name; g_buttons keeps buttons the game may have destroyed and is not read here.
     const char* hovered()
     {
         MyGUI::Widget* w = MyGUI::InputManager::getInstance().getMouseFocusWidget();
@@ -323,6 +350,7 @@ namespace
             g_tip->setVisible(true);
     }
 
+    // refreshSection is protected; only a derived class may take its address.
     struct InventoryGUIAccess : public InventoryGUI
     {
         static bool hook()
@@ -351,7 +379,7 @@ namespace ui
     {
         if (!g_enabled || !g_tips || g_tipFailed)
             return;
-
+        // MyGUI throws; an exception costs the hover text, not the game.
         try
         {
             if (g_tip != NULL && !tipAlive())
@@ -369,6 +397,10 @@ namespace ui
         }
     }
 
+    // getTextSize comes out smaller than the text the game draws, about 5% in width and 22% in line height
+    // (the game scales its fonts, `font size2` in settings.cfg). So the text is given room to spare
+    // (centred, the spare is an even margin), and the panel then grows until the skin's own text region
+    // holds it. The tip_size line carries the numbers.
     void tipSize(MyGUI::TextBox* tip, const char* font, bool fresh, int& w, int& h)
     {
         const MyGUI::IntSize text = tip->getTextSize();
@@ -408,7 +440,7 @@ namespace ui
         if (!g_enabled)
             return true;
         if (!stance::knownLayout())
-            return false;
+            return false;       // InventoryGUI +0x60 is a 1.0.65 layout; logged by the features line
         if (!InventoryGUIAccess::hook())
         {
             kit::log::error("Nitoryu: could not hook InventoryGUI::refreshSection (no toggle button; Alt+Shift+N still works)");

@@ -1,4 +1,8 @@
-#include "kit/input.h"
+// Threads:
+//   No hook of its own: flow and Mugen are fed from the combat hooks and read by the HUD on the main loop.
+//   g_lock guards g_flow and g_chain.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <kenshi/Kenshi.h>
 #include <kenshi/Character.h>
@@ -24,35 +28,37 @@ namespace
     const unsigned MUGEN_SAY_GAP_MS = 3000;
 
     volatile bool g_enabled = true;
-
-    bool g_flowOn = true;
-    int g_flowTier = 4;
-    int g_flowAttacks = 3;
-    double g_flowWindowMs = 5000.0;
-    double g_flowMs = 4000.0;
-    double g_flowCooldownMs = 5000.0;
-    float g_flowDex = 0.3f;
-    float g_flowSpeed = 0.3f;
-    float g_flowCap = 0.3f;
-    bool g_mugenOn = true;
-    int g_mugenTier = 5;
-    double g_chainWindowMs = 2500.0;
+    // copies of the settings (cfg: the table < FCS < the ini), set by applySettings
+    bool g_flowOn = true;               // cfg::FLOW_ON ([Flow] flow)
+    int g_flowTier = 4;                 // cfg::FLOW_MIN_TIER
+    int g_flowAttacks = 3;              // cfg::FLOW_ATTACKS
+    double g_flowWindowMs = 5000.0;     // cfg::FLOW_WINDOW_MS
+    double g_flowMs = 4000.0;           // cfg::FLOW_DURATION_MS
+    double g_flowCooldownMs = 5000.0;   // cfg::FLOW_COOLDOWN_MS
+    float g_flowDex = 0.3f;             // cfg::FLOW_DEX_BONUS
+    float g_flowSpeed = 0.3f;           // cfg::FLOW_SPEED
+    float g_flowCap = 0.3f;             // cfg::FLOW_CAP_BONUS
+    bool g_mugenOn = true;              // cfg::MUGEN_ON ([Mugen] mugen)
+    int g_mugenTier = 5;                // cfg::MUGEN_MIN_TIER
+    double g_chainWindowMs = 2500.0;    // cfg::MUGEN_CHAIN_WINDOW_MS
 
     struct Flow
     {
-        double t[MAX_ATTACKS];
+        double t[MAX_ATTACKS];  // game times of the counted attacks, oldest first
         int n;
-        double start, end;
+        double start, end;      // the last flow (NEVER: none yet)
     };
 
     CRITICAL_SECTION g_lock;
     std::map<Character*, Flow> g_flow;
-    std::map<Character*, double> g_chain;
+    std::map<Character*, double> g_chain;       // game time a chain was armed
 
+    // What the mark shows. A chain is usually taken within a second, so the mark stays MUGEN_LINGER_MS
+    // after the take, or nobody would see it.
     const double MUGEN_LINGER_MS = 700.0;
     struct ChainShown
     {
-        double armed, taken;
+        double armed, taken;    // taken: NEVER while it waits
     };
     std::map<Character*, ChainShown> g_chainShown;
 
@@ -132,7 +138,7 @@ namespace flow
                 it = g_flow.insert(std::make_pair(victim, z)).first;
             }
             Flow& f = it->second;
-
+            // Nothing counts during flow or its cooldown.
             if (f.end > NEVER && now >= f.start && now < f.end + g_flowCooldownMs)
             {
                 diag::count(now < f.end ? "flow_attack_in_flow" : "flow_attack_in_cooldown");
@@ -162,7 +168,7 @@ namespace flow
         if (!started)
             return;
         diag::count("flow_start");
-
+        // The visible cue; env=stage only.
         feedback::say(victim, lang::text("speech.flow").c_str(), 0);
         if (diag::takeDetail())
             kit::Diag("flow").kv("who", victim->displayName).kv("dp", s.dp).kv("tier", s.tier)
@@ -182,7 +188,7 @@ namespace flow
         }
         if (!down(c))
             return true;
-
+        // On the ground: flow ends here, and its cooldown starts.
         Lock l;
         std::map<Character*, Flow>::iterator it = g_flow.find(c);
         if (it != g_flow.end() && now < it->second.end)
@@ -253,7 +259,7 @@ namespace mugen
             g_chainShown[attacker] = cs;
         }
         diag::count("mugen_chain_armed");
-        feedback::say(attacker, lang::text("speech.mugen").c_str(), MUGEN_SAY_GAP_MS);
+        feedback::say(attacker, lang::text("speech.mugen").c_str(), MUGEN_SAY_GAP_MS);    // env=stage only
     }
 
     bool takeChain(Character* c, double now)

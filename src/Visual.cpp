@@ -1,4 +1,9 @@
-#include "kit/input.h"
+// Threads:
+//   No hook of its own: the main loop's tick (attach, follow, sheathe). The setWeapon hook queues draws and
+//   sheathes (noteDraw, noteSheathe), the combat threads ask bladeReady().
+//   g_lock guards g_ready, g_pending and g_pendingSheathe; g_entries and g_lefties are the main loop's alone.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <kenshi/Character.h>
 #include <kenshi/Appearance.h>
@@ -42,25 +47,31 @@
 
 namespace
 {
-
+    // The left blade's slot. With the pose engine (Arms.cpp) it hangs on Bip01
+    // Prop1, which the engine re-poses every frame as the mirror of Bip01 Prop2
+    // (the right weapon's mount, keyed in every sword animation), with no
+    // offset, exactly as `hands` hangs on Prop2. Without it (mirror_pose=0, or a
+    // rig the engine cannot mirror) Prop1 is the two-hand grip point at the
+    // right hand, so the blade goes on Bip01 L Hand with a fixed grip offset.
     const char* SLOT_PROP = "nitoryu_offhand";
     const char* SLOT_HAND = "nitoryu_offhand_hand";
     const DWORD TICK_MS = 100;
-
+    // setWeapon runs twice per draw, alternating the pair members: act only once the draws have settled.
     const DWORD SETTLE_MS = 300;
-    const DWORD CHECK_HANDS_MS = 1000;
+    const DWORD CHECK_HANDS_MS = 1000;  // log which member ended in the hands
     const DWORD VERIFY_MS = 1000;
+    // The game re-hangs weapons when its own draw ends (~0.7-1 s): attach fresh once more after that.
+    const DWORD REFRESH_LATE_MS = 1200;       // how often the left blade's slot is checked
+    const DWORD RESTORE_WATCH_MS = 2000; // after a sheathe, keep fixing the back
 
-    const DWORD REFRESH_LATE_MS = 1200;
-    const DWORD RESTORE_WATCH_MS = 2000;
-
+    // AttachmentData (0x98 bytes), read by AppearanceBase::getAttachmentPosition.
     struct SlotData
     {
-        std::string name;
-        std::string bone;
-        Ogre::Vector3 pos;
-        Ogre::Quaternion rot;
-        std::string mesh;
+        std::string name;           // 0x00
+        std::string bone;           // 0x28
+        Ogre::Vector3 pos;          // 0x50  offset in the bone's frame
+        Ogre::Quaternion rot;       // 0x5c  (Ogre order w, x, y, z)
+        std::string mesh;           // 0x70  editor preview mesh, unused in game
     };
     static_assert(sizeof(std::string) == 0x28, "the game's std::string is 0x28 bytes (VS2010 x64)");
     static_assert(offsetof(SlotData, bone) == 0x28, "AttachmentData::bone");
@@ -73,56 +84,68 @@ namespace
         std::equal_to<std::string>, Ogre::STLAllocator<std::pair<std::string const, AttachmentData*>,
         Ogre::GeneralAllocPolicy> > SlotMap;
 
+    // [OffHand] in Nitoryu.ini, for SLOT_HAND; defaults = the mirror of Bip01
+    // Prop2's bind pose in the right hand, expressed in Bip01 L Hand.
     std::string g_bone = "Bip01 L Hand";
     Ogre::Vector3 g_pos(0.01f, 0.0f, -0.275f);
     Ogre::Quaternion g_rot(0.7053f, -0.0007f, 0.0007f, -0.7089f);
     bool g_enabled = true;
-    bool g_pose = true;
-
+    bool g_pose = true;         // [OffHand] mirror_pose: left arm mirrors the right (Arms.cpp)
+    // False when the feature is turned off at run time (the core hooks failed): the next tick takes
+    // every blade away and stops.
     volatile bool g_live = true;
 
     struct Entry
     {
         hand who;
-        Weapon* off;
-        const char* slot;
-        GameData* offData;
-        Weapon* lastOff;
-        Weapon* lastMain;
-
+        Weapon* off;                // attached off weapon, or NULL
+        const char* slot;           // SLOT_PROP or SLOT_HAND while attached
+        GameData* offData;          // its GameData (outlives the item; safe to compare)
+        Weapon* lastOff;            // after a detach: the weapon to restore (pointer-checked before use)
+        Weapon* lastMain;           // the main weapon while dual (pointer-checked before use)
+        // The pair member whose whole weapon we took off each body slot (BODY_SLOTS order; NULL: none),
+        // and its GameData. restoreSheaths gives it back.
         Weapon* hidden[3];
         GameData* hiddenData[3];
-        DWORD settleAt;
-        DWORD checkHandsAt;
-        DWORD restoreUntil;
-        DWORD verifyAt;
-        bool verifiedOk;
-        bool refresh;
-        DWORD refreshLateAt;
-        Weapon* lastHands;
-        GameData* lastHandsData;
-        bool seenHands;
-        CombatTechniqueData* dashTech;
-        float dashProg;
-        int dashStall;
-        bool dashDone;
-        int dashClip;
-
-        bool offHip;
-        bool sheathe;
-        bool sheatheHip;
-        double sheatheStart;
-        bool sheatheMain;
-        bool sheatheOffHome;
-        int sheatheClip;
-
+        DWORD settleAt;             // no attach/detach before this (draw debounce)
+        DWORD checkHandsAt;         // log the weapon in the hands at this time (0 = done)
+        DWORD restoreUntil;         // after a detach, re-check the back until this time
+        DWORD verifyAt;                 // next check that our slot shows the blade
+        bool verifiedOk;                // the check has seen our slot right (it can read it)
+        bool refresh;                   // a draw happened while attached: re-attach fresh
+        DWORD refreshLateAt;            // a second fresh attach after the game's draw ends
+        Weapon* lastHands;              // the weapon in the hands at the last real draw
+        GameData* lastHandsData;        // its GameData (compared, never dereferenced)
+        bool seenHands;                 // lastHands is known
+        CombatTechniqueData* dashTech;  // the tailed clip's technique playing (kept until its track ends)
+        float dashProg;                 // its progress, never going back
+        int dashStall;                  // frames without progress
+        bool dashDone;                  // finished; not restarted until the attack ends
+        int dashClip;                   // the tailed clip (CLIP_DASH, ...), -1: none
+        // the dual sheathe
+        bool offHip;                    // the off blade was drawn from the hip (stance::Info::offFromHip while dual)
+        bool sheathe;                   // a sheathe hold is on: the clip plays, the left blade is still in the hand
+        bool sheatheHip;                // ... with the hip clip
+        double sheatheStart;            // defense::clockMs() of its start
+        bool sheatheMain;               // we hung the main weapon's bare blade on `hands` for it
+        bool sheatheOffHome;            // the left blade went to its sheath already
+        int sheatheClip;                // the clip the hold plays (CLIP_SHEATHE, _HIP, CLIP_CHIBURI or _CHIBURI_HIP)
+        // the dual draw's hold (below sheatheCut): both blades stay on the back until the clip's grip frame
+        bool drawHide;                  // a draw was noted with no left blade attached: the hold may start after the settle
+        bool drawHold;                  // the hold is on: the clip plays, the hands are empty
+        bool drawHeld;                  // it ended at this tick: the attach that follows does not start the clip again
+        bool drawHidden;                // we took the main weapon out of `hands` (and hung it whole on its slot)
+        arms::Clip drawClip;            // the clip the hold plays (CLIP_DRAW or CLIP_DRAW_HIP)
+        double drawStart;               // defense::clockMs() of the hold's start
+        // the chiburi: the last frame this fighter was in combat mode with an attack target
+        // (defense::clockMs(), 0: never), and that target
         double foughtAt;
         hand foe;
-        foreign::Watch fg;
+        foreign::Watch fg;              // another plugin drives this fighter (Foreign.h)
     };
 
     CRITICAL_SECTION g_lock;
-    std::set<Character*> g_ready;
+    std::set<Character*> g_ready;           // under g_lock: left blade attached (bladeReady)
 
     void setReady(Character* c, bool on)
     {
@@ -133,13 +156,14 @@ namespace
             g_ready.erase(c);
         LeaveCriticalSection(&g_lock);
     }
-    std::vector<hand> g_pending;
-    std::vector<hand> g_pendingSheathe;
-    std::map<Character*, Entry> g_entries;
+    std::vector<hand> g_pending;            // noted by combat hooks
+    std::vector<hand> g_pendingSheathe;     // sheathes, kept only for tracked characters
+    std::map<Character*, Entry> g_entries;  // main loop only
     DWORD g_lastTick = 0;
 
     std::string nameOf(RootObjectBase* o) { return o != NULL ? o->displayName : std::string("<null>"); }
 
+    // Time comparisons that survive the GetTickCount wrap.
     bool reached(DWORD now, DWORD at) { return (LONG)(now - at) >= 0; }
 
     std::string iniPath()
@@ -171,6 +195,9 @@ namespace
         return got;
     }
 
+    // Adds the left-hand slot to this race's slot map once. The map is shared by
+    // every character of the race and read by the game; one insert without a
+    // rehash only links a node, so skip if it would rehash.
     bool ensureSlot(AppearanceBase* app, const char* slotName, const std::string& bone,
                     const Ogre::Vector3& pos, const Ogre::Quaternion& rot)
     {
@@ -198,6 +225,8 @@ namespace
         return true;
     }
 
+    // Index of `w` among the weapons of section `name`, or -1. Compares
+    // pointers only, so a stale `w` (sold, dropped) is never dereferenced.
     int indexInSection(Inventory* inv, const char* name, Weapon* w)
     {
         InventorySection* sec = inv->getSection(std::string(name));
@@ -217,20 +246,29 @@ namespace
         return -1;
     }
 
+    // True if `w` still sits in the back or hip section (it hangs on the body).
     bool onBody(Character* c, Weapon* w)
     {
         Inventory* inv = c->getInventory();
         return inv != NULL && (indexInSection(inv, "back", w) >= 0 || indexInSection(inv, "hip", w) >= 0);
     }
 
+    // AttachedEntity (opaque in the headers; AppearanceBase::attachItem/detachItem, 1.0.65):
+    // +0x08 int kind (0 = item), +0x78 the item's GameData,
+    // +0xC0 std::string mesh override (empty = the item's full `mesh`).
     struct EntityView
     {
         int kind;
         GameData* data;
         size_t meshLen;
-        unsigned long long itemKey;
+        unsigned long long itemKey; // the attached item's handle (index | serial << 32), 0 when unknown
     };
 
+    // The offset of the attached item inside AttachedEntity, found once at run time from the left
+    // blade's own entity (we attached that item there) and confirmed on the main weapon's `hands`
+    // entity. -2: not probed yet; -1: not found, so items are matched by GameData (two identical
+    // katanas then look the same). The entity holds no Item pointer but a `hand` of its item, so the
+    // item is matched by its handle's index and serial, read as one 64-bit key.
     int g_itemOff = -2;
 
     unsigned long long keyOf(const Item* it)
@@ -240,7 +278,7 @@ namespace
         const hand& h = const_cast<Item*>(it)->getHandle();
         return (unsigned long long)h.index | ((unsigned long long)h.serial << 32);
     }
-    int g_itemProbeMisses = 0;
+    int g_itemProbeMisses = 0;      // a fresh entity may not carry its item yet: 3 tries
 
     void readEntity(void* ctx)
     {
@@ -262,10 +300,11 @@ namespace
     struct ItemProbe
     {
         const char* ae;
-        unsigned long long want;
+        unsigned long long want;    // index | serial << 32
         int found;
     };
 
+    // The first 4-aligned field pair that holds `want`, skipping the mesh string at 0xC0-0xE7.
     const int PROBE_END = 0x180;
 
     void probeItem(void* ctx)
@@ -296,6 +335,7 @@ namespace
         memcpy(d->bytes, d->ae, PROBE_END);
     }
 
+    // Once, when the item is not found: the entity's first bytes and the item's identity, for the log.
     void dumpEntity(const char* ae, Weapon* off)
     {
         EntityDump d;
@@ -349,7 +389,7 @@ namespace
             kit::Diag("visual_item_offset").kv("found", false).kv("match", "gamedata").emit();
             return;
         }
-
+        // Confirm on the main weapon's own entity: -1 unknown, 0 differs, 1 same.
         int confirmed = -1;
         Weapon* hands = c->getCurrentWeapon();
         AttachedEntity* he = hands != NULL ? app->getAttachedEntity(std::string("hands")) : NULL;
@@ -368,6 +408,9 @@ namespace
             .kv("match", g_itemOff >= 0 ? "item" : "gamedata").emit();
     }
 
+    // What a slot shows, for one item: nothing, something else, the item whole (no mesh
+    // override), or the item with a mesh override (its empty sheath, or our bare blade).
+    // Without the item offset the item is matched by `gd`.
     enum Shows { SHOWS_NONE, SHOWS_OTHER, SHOWS_FULL, SHOWS_OVERRIDE };
 
     Shows slotState(AppearanceBase* app, const std::string& slot, const Item* item, GameData* gd)
@@ -389,6 +432,7 @@ namespace
         return v.meshLen != 0 ? SHOWS_OVERRIDE : SHOWS_FULL;
     }
 
+    // Weapons of this type hanging in the back and hip sections, the one in the hands excepted.
     int carriedOfType(Character* c, GameData* gd)
     {
         Inventory* inv = c->getInventory();
@@ -411,6 +455,8 @@ namespace
         return n;
     }
 
+    // Does the body still lack this weapon? By item: no body slot shows it whole. Without the
+    // item offset: fewer body slots show its type whole than the body carries.
     bool bodyLacks(Character* c, AppearanceBase* app, const Item* w, GameData* gd)
     {
         int shown = 0;
@@ -429,6 +475,13 @@ namespace
         return t.empty() ? std::string("-") : t;
     }
 
+    // While the stance is drawn neither pair member hangs whole on the body: a body slot that
+    // shows one of them without a mesh override (the blade in its sheath) gets only that item's
+    // `sheath`, as CharacterHuman::leaveSheathEquipped does for the drawn weapon. The drawn main
+    // weapon's slot already carries its sheath override, so it only matches when the game
+    // re-hung a duplicate. Matched by item, so a third weapon of the same type keeps its blade;
+    // each slot remembers its item for restoreSheaths. Without the item offset: by the off
+    // weapon's GameData.
     void fixSheaths(Character* c, AppearanceBase* app, Weapon* main, Weapon* off, Entry& e)
     {
         Weapon* items[2] = { off, main };
@@ -451,7 +504,7 @@ namespace
                 e.hiddenData[i] = gd;
                 diag::count(k == 0 ? "visual_sheath_fixed" : "visual_sheath_fixed_main");
                 if (sheath.empty())
-                    diag::count("visual_sheath_none");
+                    diag::count("visual_sheath_none");      // a weapon without a sheath mesh
                 if (diag::takeDetail())
                     kit::Diag("visual_sheath").kv("who", nameOf(c)).kv("slot", slot).kv("item", k == 0 ? "off" : "main")
                         .kv("sheath", sheath).emit();
@@ -460,11 +513,16 @@ namespace
         }
     }
 
+    // Undo fixSheaths once the stance is not drawn: each slot we emptied gets its whole weapon
+    // back when that weapon still hangs on the body and is not in the hands; an empty sheath
+    // of a weapon that is gone is just removed. A slot we left empty (a weapon without a `sheath`
+    // mesh) is filled again too. Returns the number of slots fixed.
+    // `only` != NULL restores that weapon alone (a sheathe hold: each blade goes home at its own frame).
     int restoreSheaths(Character* c, AppearanceBase* app, Entry& e, Weapon* only = NULL)
     {
         Weapon* hands = c->getCurrentWeapon();
         int fixed = 0;
-        Weapon* put[3] = { NULL, NULL, NULL };
+        Weapon* put[3] = { NULL, NULL, NULL };      // attached whole in this pass: never twice
         for (int i = 0; i < 3; ++i)
         {
             Weapon* w = e.hidden[i];
@@ -473,11 +531,11 @@ namespace
             std::string slot(BODY_SLOTS[i]);
             if (w == hands)
             {
-                e.hidden[i] = NULL;
+                e.hidden[i] = NULL;         // drawn again (toggled off with it in the hands): its sheath stays, as the game shows it
                 diag::count("visual_restore_in_hands");
                 continue;
             }
-            bool carried = onBody(c, w);
+            bool carried = onBody(c, w);    // pointer compares only: w may be gone
             Shows st = slotState(app, slot, w, e.hiddenData[i]);
             if (st == SHOWS_OVERRIDE)
             {
@@ -493,7 +551,7 @@ namespace
                 bool ok = app->attachItem(w, slot);
                 diag::count(ok ? "visual_restored_empty_slot" : "visual_restore_attach_failed");
                 if (!ok)
-                    continue;
+                    continue;               // retried while the watch lasts
                 put[i] = w;
                 ++fixed;
             }
@@ -505,7 +563,9 @@ namespace
                     .kv("state", (int)st).kv("carried", carried).emit();
             e.hidden[i] = NULL;
         }
-
+        // The game re-hangs the sheathed weapons on its own schedule and can put a pair
+        // member's empty sheath back later: while the watch lasts, give it its weapon. Only with
+        // nothing in the hands (a drawn main weapon keeps its own sheath).
         Weapon* pair[2] = { e.lastOff, e.lastMain };
         for (int k = 0; k < 2 && hands == NULL; ++k)
         {
@@ -523,7 +583,7 @@ namespace
                 app->attachItem(w, slot);
                 diag::count("visual_restored_late");
                 ++fixed;
-                break;
+                break;                      // one weapon, one slot
             }
         }
         return fixed;
@@ -531,7 +591,9 @@ namespace
 
     bool attach(Character* c, AppearanceBase* app, Weapon* main, Weapon* off, Entry& e)
     {
-
+        // The pose engine first: it makes Prop1 the left blade's mount. A race whose record says
+        // `nitoryu rig` = 1 is not posed (the blade in the fixed left-hand grip, as for a rig the mirror
+        // cannot build).
         bool fixedGrip = stance::rigOf(c) == stance::RIG_FIXED_GRIP;
         if (fixedGrip)
             diag::count("visual_race_fixed_grip");
@@ -549,7 +611,7 @@ namespace
         std::string bare = kit::fcsFile(off->data, "bare sword", "");
         if (bare.empty())
         {
-            diag::count("visual_no_bare_mesh");
+            diag::count("visual_no_bare_mesh");     // the stance refuses such a pair
             arms::release(c, arms::OWNER_DUAL);
             return false;
         }
@@ -564,7 +626,7 @@ namespace
             return false;
         }
         e.off = off;
-        e.refresh = false;
+        e.refresh = false;          // attached fresh just now
         setReady(c, true);
         e.slot = slot;
         e.offData = off->getGameData();
@@ -572,11 +634,14 @@ namespace
         e.lastMain = main;
         e.restoreUntil = 0;
         probeItemOffset(c, app, slot, off);
-
+        // As leaveSheathEquipped does for the drawn weapon: only the sheath stays behind.
         fixSheaths(c, app, main, off, e);
         return true;
     }
 
+    // The two members of an identical pair traded hands (some mods re-draw all the time): the left
+    // blade is re-bound to the new off item in place, with no draw clip and no settle, so the entity
+    // always belongs to the item that is really off.
     void rebind(Character* c, AppearanceBase* app, Weapon* main, Weapon* off, Entry& e)
     {
         std::string bare = kit::fcsFile(off->data, "bare sword", "");
@@ -597,18 +662,18 @@ namespace
         fixSheaths(c, app, main, off, e);
     }
 
-    void sheatheDropMain(Character* c, AppearanceBase* app, Entry& e);
+    void sheatheDropMain(Character* c, AppearanceBase* app, Entry& e);     // below
 
     void detach(Character* c, AppearanceBase* app, Entry& e, const char* why)
     {
         if (e.off != NULL)
         {
-            e.off = NULL;
+            e.off = NULL;               // never dereference it again: it may be gone
             setReady(c, false);
             if (app != NULL)
             {
-                sheatheDropMain(c, app, e);
-
+                sheatheDropMain(c, app, e);         // our bare main blade of a sheathe hold
+                // a sheathe hold took the left blade off at its home frame already
                 if (!e.sheatheOffHome || app->getAttachedEntity(std::string(e.slot)) != NULL)
                     app->detachItem(std::string(e.slot));
                 if (restoreSheaths(c, app, e) == 0)
@@ -621,17 +686,26 @@ namespace
         e.sheathe = false;
         e.sheatheMain = false;
         e.sheatheOffHome = false;
-        arms::release(c, arms::OWNER_DUAL);
+        arms::release(c, arms::OWNER_DUAL);     // also when nothing was attached
     }
 
-    bool g_sheatheMain = true;
+    // ---- the dual sheathe ----
+    // The game's sheathe is one call with no animation (CharacterHuman::sheatheWeapon: the blade leaves `hands`,
+    // the stance goes unarmed, the weapon hangs whole on its slot). Nothing of it is delayed: after it, for the
+    // length of our clip, the left blade stays in the hand, the main weapon's bare blade is shown in the right
+    // hand again, and each goes to its sheath at its own frame. Visual only.
+    bool g_sheatheMain = true;          // [Animations] dual_sheathe_main_blade
 
     bool upright(Character* c)
     {
         return !c->isDown() && !c->isUnconcious() && !c->isRagdoll() && !c->isBeingCarried();
     }
 
-    bool g_sheatheYields = true;
+    // The game sheathes for a goal that needs the hands (first aid, a splint, looting, lifting a body) and
+    // starts it at once, so our flick and sheathe would play over it. They play only under a goal that
+    // leaves the arms free: a fight, a move, standing. Any other goal, a job of another mod included, gets
+    // the vanilla sheathe.
+    bool g_sheatheYields = true;        // [Animations] sheathe_yields_to_jobs
 
     bool goalLeavesArmsFree(TaskType t)
     {
@@ -652,6 +726,9 @@ namespace
         }
     }
 
+    // The game plays a reaction on the body, so our pose steps aside (Arms.h Reacting): a stagger, down,
+    // getting up, unconscious, playing dead, ragdoll, carried, dead. The setting nitoryu yield to reactions
+    // ([Animations] yield_to_reactions) = 0 turns it off.
     int reactingOf(Character* c, CombatClass* cc)
     {
         if (!cfg::b(cfg::YIELD_TO_REACTIONS))
@@ -667,6 +744,7 @@ namespace
         return arms::REACT_NONE;
     }
 
+    // The goal that takes the hands, or NULL_TASK when the clip may play.
     TaskType handsGoal(Character* c)
     {
         if (!g_sheatheYields)
@@ -676,6 +754,8 @@ namespace
         return goalLeavesArmsFree(goal) ? NULL_TASK : goal;
     }
 
+    // Our bare main blade leaves `hands`. A weapon drawn meanwhile keeps the slot: the same item shows the same
+    // entity the game would; another weapon gets its own blade there.
     void sheatheDropMain(Character* c, AppearanceBase* app, Entry& e)
     {
         if (!e.sheatheMain)
@@ -686,10 +766,10 @@ namespace
         Weapon* hands = c->getCurrentWeapon();
         if (hands != NULL && hands == e.lastMain)
             return;
-
+        // lastMain is only read while it still hangs on the body (it may be gone otherwise)
         if (hands != NULL && !(onBody(c, e.lastMain)
                                && slotState(app, std::string("hands"), e.lastMain, NULL) == SHOWS_OVERRIDE))
-            return;
+            return;                     // the game's own entity of the drawn weapon
         app->detachItem(std::string("hands"));
         if (hands != NULL)
         {
@@ -700,7 +780,11 @@ namespace
         }
     }
 
-    const double CHIBURI_WINDOW_MS = 8000.0;
+    // The chiburi: a back sheathe right after a fight plays the flick, a pause, then the same sheathe,
+    // instead of the plain sheathe. "Right after a fight": the fighter had an attack target in combat mode
+    // within the window (updateModes notes it every frame) and that target is dead, down or unconscious now.
+    // The hip sheathe has its own chiburi (CLIP_CHIBURI_HIP), same rule.
+    const double CHIBURI_WINDOW_MS = 8000.0;    // game time between the last fighting frame and the sheathe
 
     bool chiburiNow(Character* c, Entry& e, double t)
     {
@@ -710,17 +794,17 @@ namespace
         Character* foe = e.foughtAt > 0.0 ? e.foe.getCharacter() : NULL;
         double gap = t - e.foughtAt;
         if (e.foughtAt <= 0.0)
-            why = "chiburi_skipped_no_fight";
+            why = "chiburi_skipped_no_fight";           // drawn with no enemy (the button, attack-move at nothing)
         else if (gap < 0.0 || gap > CHIBURI_WINDOW_MS)
             why = "chiburi_skipped_late";
         else if (foe == NULL)
             why = "chiburi_skipped_foe_gone";
         else if (!foe->isDead() && !foe->isDown() && !foe->isUnconcious())
-            why = "chiburi_skipped_foe_up";
+            why = "chiburi_skipped_foe_up";             // he ran, or the player called the fighter off
         if (diag::takeDetail())
             kit::Diag("chiburi").kv("who", nameOf(c)).kv("foe", nameOf(foe)).kv("gap_ms", gap)
                 .kv("plays", why == NULL ? "yes" : why).emit();
-        e.foughtAt = 0.0;
+        e.foughtAt = 0.0;               // one fight, one flick
         if (why != NULL)
         {
             diag::count(why);
@@ -729,6 +813,7 @@ namespace
         return true;
     }
 
+    // The tick after the game sheathed a dual fighter: start the hold. False: no hold (the caller detaches now).
     bool sheatheBegin(Character* c, AppearanceBase* app, Entry& e)
     {
         if (e.off == NULL || e.sheathe || !arms::clipOn(arms::CLIP_SHEATHE))
@@ -737,18 +822,18 @@ namespace
         if (e.slot != SLOT_PROP)
             why = "sheathe_hold_skipped_not_posed";
         else if (c->getCurrentWeapon() != NULL)
-            why = "sheathe_hold_skipped_weapon_in_hands";
+            why = "sheathe_hold_skipped_weapon_in_hands";       // the stance ended with a blade out: no sheathe
         else if (e.lastMain == NULL || !onBody(c, e.off) || !onBody(c, e.lastMain))
             why = "sheathe_hold_skipped_pair_not_on_body";
         else if (!upright(c))
             why = "sheathe_hold_skipped_down";
         else if (foreign::playing(e.fg))
-            why = "sheathe_hold_skipped_foreign";
+            why = "sheathe_hold_skipped_foreign";     // the other plugin's swing plays: the blades go home now
         TaskType job = why == NULL ? handsGoal(c) : NULL_TASK;
         if (job != NULL_TASK)
         {
-            why = "sheathe_hold_skipped_job";
-            e.foughtAt = 0.0;
+            why = "sheathe_hold_skipped_job";           // first aid, a splint, loot: the hands are taken
+            e.foughtAt = 0.0;                           // the fight's flick is spent, as if it had played
             if (diag::takeDetail())
                 kit::Diag("sheathe_job").kv("who", nameOf(c)).kv("goal", (int)job).kv("at", "begin").emit();
         }
@@ -763,7 +848,7 @@ namespace
         arms::playClip(c, k, t);
         if (!arms::clipPlaying(c, k))
         {
-            diag::count("sheathe_hold_skipped_clip_busy");
+            diag::count("sheathe_hold_skipped_clip_busy");      // another clip plays (a draw just started, a hit)
             return false;
         }
         if (k == arms::CLIP_CHIBURI || k == arms::CLIP_CHIBURI_HIP)
@@ -774,11 +859,11 @@ namespace
         e.sheatheStart = t;
         e.sheatheOffHome = false;
         e.sheatheMain = false;
-        setReady(c, false);
+        setReady(c, false);             // no second blade for the combat code: the fighter is sheathed
         diag::count("sheathe_hold_start");
         if (e.sheatheHip)
             diag::count("sheathe_hold_hip");
-
+        // the right blade: the game took it out of the hand already
         if (g_sheatheMain && g_itemOff >= 0 && e.lastMain != e.off
             && app->getAttachedEntity(std::string("hands")) == NULL)
         {
@@ -795,6 +880,7 @@ namespace
         return true;
     }
 
+    // Every tick of a hold. False: it is over (the caller detaches).
     bool sheatheHold(Character* c, AppearanceBase* app, Entry& e)
     {
         arms::Clip k = (arms::Clip)e.sheatheClip;
@@ -806,13 +892,13 @@ namespace
         else if (!upright(c))
             end = "sheathe_hold_cut_down";
         else if (!arms::clipPlaying(c, k))
-            end = age >= d.lengthS - 0.15f ? "sheathe_hold_end" : "sheathe_hold_cut_clip";
+            end = age >= d.lengthS - 0.15f ? "sheathe_hold_end" : "sheathe_hold_cut_clip";     // a swing, a block, a hit
         else if (age > d.lengthS + 0.4f || age < -0.5f)
-            end = "sheathe_hold_timeout";
+            end = "sheathe_hold_timeout";               // not rendered: the clip never advanced
         TaskType job = end == NULL ? handsGoal(c) : NULL_TASK;
         if (job != NULL_TASK)
         {
-
+            // a job that needs the hands started during the clip: it gives way, the blades go home now
             end = "sheathe_hold_cut_job";
             arms::stopClip(c, k);
             if (diag::takeDetail())
@@ -840,7 +926,8 @@ namespace
                 restoreSheaths(c, app, e, e.off);
             diag::count("sheathe_off_home");
         }
-
+        // the game hangs the sheathed weapons whole again on its own schedule: a blade still in a hand keeps
+        // only its sheath on the body
         Weapon* main = e.sheatheMain && onBody(c, e.lastMain) ? e.lastMain : NULL;
         Weapon* off = !e.sheatheOffHome && onBody(c, e.off) ? e.off : NULL;
         if (main != NULL || off != NULL)
@@ -848,19 +935,165 @@ namespace
         return true;
     }
 
+    // The blades were drawn again as a dual pair during a hold: the clip gives way, the left blade stays (or is
+    // attached again by update() when it had gone home).
     void sheatheCut(Character* c, AppearanceBase* app, Entry& e)
     {
         arms::stopClip(c, (arms::Clip)e.sheatheClip);
         sheatheDropMain(c, app, e);
         e.sheathe = false;
         if (e.sheatheOffHome)
-            e.off = NULL;
+            e.off = NULL;               // update() attaches it fresh (with the draw clip)
         else
             setReady(c, true);
         e.sheatheOffHome = false;
         diag::count("sheathe_hold_cut_redraw_dual");
     }
 
+    // ---- the dual draw's hold ----
+    // The game's draw is one call with no animation, like its sheathe: the main weapon is in `hands` at once and its
+    // body slot keeps only the sheath. The draw clip starts standing with the arms down and takes the hilts on the
+    // grip frame (moves::drawGripS), so until then both weapons hang whole on the back and the hands are empty: the
+    // sheathe hold's calls in the other order. Visual only: the combat code gets its second blade at the grip, as it
+    // did at the attach. A swing, a block or a hit that takes the clip ends the hold at once (the blades appear).
+    bool g_drawHold = true;             // [Animations] dual_draw_hold
+
+    bool drawHoldWanted(Character* c, const stance::Info& s, Entry& e)
+    {
+        // the item offset: fixSheaths gives the main weapon's slot its sheath back at the grip only with it.
+        // The hip draw too: its clip starts with the arms down as well, the off blade stays on the hip
+        // until the attach at the grip, as the back one stays on the back.
+        return g_drawHold && g_pose && g_itemOff >= 0 && s.dual && s.main != NULL && s.off != NULL
+            && s.main != s.off && arms::clipOn(s.offFromHip ? arms::CLIP_DRAW_HIP : arms::CLIP_DRAW)
+            && stance::rigOf(c) != stance::RIG_FIXED_GRIP
+            && upright(c) && !foreign::playing(e.fg) && !kit::fcsFile(s.main->data, "bare sword", "").empty();
+    }
+
+    // The main weapon out of `hands` and whole on its body slot (the game re-hangs it on its own schedule: every tick).
+    void drawHideMain(AppearanceBase* app, Weapon* main, Entry& e)
+    {
+        if (app->getAttachedEntity(std::string("hands")) != NULL)
+            app->detachItem(std::string("hands"));
+        e.drawHidden = true;
+        GameData* gd = main->getGameData();
+        for (int i = 0; i < 3; ++i)
+        {
+            std::string slot(BODY_SLOTS[i]);
+            if (slotState(app, slot, main, gd) != SHOWS_OVERRIDE)
+                continue;
+            app->detachItem(slot);
+            app->attachItem(main, slot);
+            diag::count("draw_hold_main_on_back");
+            break;
+        }
+    }
+
+    // The weapon in the hands shows in `hands` again (as sheatheDropMain puts a drawn weapon there). `sheaths`: its
+    // body slot goes back to the sheath alone here (no attach follows that would do it).
+    void drawShowMain(Character* c, AppearanceBase* app, Entry& e, bool sheaths)
+    {
+        if (!e.drawHidden)
+            return;
+        e.drawHidden = false;
+        Weapon* hands = c->getCurrentWeapon();
+        if (hands == NULL)
+            return;                     // sheathed meanwhile: the game hung it whole itself
+        if (app->getAttachedEntity(std::string("hands")) == NULL)
+        {
+            std::string bare = kit::fcsFile(hands->data, "bare sword", "");
+            if (!bare.empty())
+                app->attachItem(hands, bare, std::string("hands"));
+        }
+        if (sheaths)
+            fixSheaths(c, app, hands, NULL, e);
+    }
+
+    // A draw was noted and has not settled: keep the hand empty from the first tick, or give the hold up.
+    void drawHideTick(Character* c, AppearanceBase* app, Entry& e)
+    {
+        stance::Info s = stance::evaluate(c, NULL);
+        if (drawHoldWanted(c, s, e))
+            drawHideMain(app, s.main, e);
+        else
+        {
+            e.drawHide = false;
+            drawShowMain(c, app, e, true);
+        }
+    }
+
+    // The settle is over and the left blade is not attached yet. False: no hold, the plain draw follows.
+    bool drawHoldBegin(Character* c, AppearanceBase* app, const stance::Info& s, Entry& e)
+    {
+        const char* why = NULL;
+        if (!arms::track(c, app->getSkeleton(), arms::OWNER_DUAL))
+            why = "draw_hold_skipped_not_posed";
+        double t = defense::clockMs();
+        if (why == NULL)
+        {
+            e.drawClip = s.offFromHip ? arms::CLIP_DRAW_HIP : arms::CLIP_DRAW;
+            arms::playClip(c, e.drawClip, t);
+            if (!arms::clipPlaying(c, e.drawClip))
+                why = "draw_hold_skipped_clip_busy";    // a swing, a block or a hit plays already
+        }
+        if (why != NULL)
+        {
+            diag::count(why);
+            return false;
+        }
+        e.drawHold = true;
+        e.drawStart = t;
+        drawHideMain(app, s.main, e);
+        diag::count("draw_hold_start");
+        if (diag::takeDetail())
+            kit::Diag("draw_hold").kv("who", nameOf(c)).kv("main", nameOf(s.main)).kv("off", nameOf(s.off)).emit();
+        return true;
+    }
+
+    // Every tick of a hold. False: it is over, the blades go into the hands now (the caller attaches).
+    bool drawHoldTick(Character* c, AppearanceBase* app, const stance::Info& s, Entry& e)
+    {
+        float age = (float)((defense::clockMs() - e.drawStart) / 1000.0);
+        const char* end = NULL;
+        // half a tick early: a blade that appears a frame before the fist closes reads better than one after the pull
+        if (age >= moves::drawGripS() - 0.05f)
+            end = "draw_hold_grip";
+        else if (!upright(c))
+            end = "draw_hold_cut_down";
+        else if (!arms::clipPlaying(c, e.drawClip))
+            end = "draw_hold_cut_clip";                 // a swing, a block, a hit
+        else if (foreign::playing(e.fg))
+            end = "draw_hold_cut_foreign";
+        else if (age < -0.5f)
+            end = "draw_hold_timeout";
+        if (end == NULL)
+        {
+            drawHideMain(app, s.main, e);
+            return true;
+        }
+        diag::count(end);
+        e.drawHold = false;
+        e.drawHeld = true;              // the clip plays already: the attach does not start it again
+        drawShowMain(c, app, e, false);
+        return false;
+    }
+
+    // The stance ended (or the entry is taken down) before the grip: nothing of the hold stays.
+    void drawHoldDrop(Character* c, AppearanceBase* app, Entry& e)
+    {
+        if (e.drawHold)
+        {
+            arms::stopClip(c, e.drawClip);
+            diag::count("draw_hold_cut_not_dual");
+        }
+        e.drawHold = false;
+        e.drawHide = false;
+        e.drawHeld = false;
+        if (app != NULL)
+            drawShowMain(c, app, e, true);
+        e.drawHidden = false;
+    }
+
+    // One second after a draw: which pair member is in the hands, and where each hangs.
     void logHands(Character* c, const stance::Info& s, const Entry& e)
     {
         Weapon* hands = c->getCurrentWeapon();
@@ -877,16 +1110,26 @@ namespace
     void update(Character* c, Entry& e, DWORD now)
     {
         AppearanceBase* app = c->getAppearance();
-        if (app == NULL || !reached(now, e.settleAt))
+        if (app == NULL)
             return;
+        if (!reached(now, e.settleAt))
+        {
+            if (e.drawHide)
+                drawHideTick(c, app, e);        // the dual draw's hold: the hand is empty before the settle ends
+            return;
+        }
         stance::Info s = stance::evaluate(c, NULL);
         if (!s.dual)
         {
-
+            if (e.drawHide || e.drawHold || e.drawHidden)
+                drawHoldDrop(c, app, e);
+            // a sheathe: our clip plays first, the blades go home at their frames, then the detach
             if (e.sheathe ? sheatheHold(c, app, e) : sheatheBegin(c, app, e))
                 return;
             detach(c, app, e, "visual_detached_not_dual");
-
+            // The game re-hangs the sheathed weapons on its own schedule: until
+            // the watch ends, with nothing in the hands, no body slot should
+            // show only the off weapon's sheath.
             if (e.off == NULL && e.offData != NULL && e.restoreUntil != 0 && !reached(now, e.restoreUntil)
                 && c->getCurrentWeapon() == NULL)
                 restoreSheaths(c, app, e);
@@ -897,7 +1140,7 @@ namespace
         if (e.off != NULL && e.off != s.off)
         {
             if (e.off == s.main && s.off->data == s.main->data)
-                rebind(c, app, s.main, s.off, e);
+                rebind(c, app, s.main, s.off, e);   // identical pair members traded hands
             else
                 detach(c, app, e, "visual_detached_pair_changed");
             if (e.off != NULL)
@@ -907,20 +1150,41 @@ namespace
         e.offHip = s.offFromHip;
         if (e.off == NULL)
         {
+            // the dual draw's hold: the clip plays from here, the blades come into the hands at the grip frame
+            if (e.drawHold)
+            {
+                if (drawHoldTick(c, app, s, e))
+                    return;
+            }
+            else if (e.drawHide)
+            {
+                e.drawHide = false;
+                if (drawHoldWanted(c, s, e) && drawHoldBegin(c, app, s, e))
+                    return;
+                drawShowMain(c, app, e, false);         // no hold: the blade back in the hand, the plain draw
+            }
+            bool held = e.drawHeld;
+            e.drawHeld = false;
             if (attach(c, app, s.main, s.off, e))
             {
                 e.checkHandsAt = now + CHECK_HANDS_MS;
-
+                // the dual draw; from the hip when the second blade is worn there. Not under another
+                // plugin's swing (its switch is instant, mid-swing too).
                 if (foreign::playing(e.fg))
                     diag::count("foreign_draw_clip_skipped");
+                else if (held)
+                    diag::count("draw_hold_blades_in_hands");
                 else
                     arms::playClip(c, s.offFromHip ? arms::CLIP_DRAW_HIP : arms::CLIP_DRAW, defense::clockMs());
             }
             return;
         }
-
+        // A reload of the character's attachments drops ours: put it back. The slot can also end up
+        // showing something else (two identical weapons without a sheath mesh). Once a second, check it
+        // shows the blade's own mesh.
         bool wrong = false;
-
+        // The game re-draws the weapon mid-fight, which hides our entity while the slot still looks
+        // taken. After every draw noted while the blade is on, attach it fresh.
         if (e.refresh)
         {
             e.refresh = false;
@@ -940,7 +1204,8 @@ namespace
             bool right = present && slotState(app, std::string(e.slot), e.off, e.offData) == SHOWS_OVERRIDE;
             if (right)
                 e.verifiedOk = true;
-
+            // only once the check has read our slot right at least once (no re-attach loop if
+            // the entity cannot be read on some build)
             wrong = wrong || (present && !right && e.verifiedOk);
             if (wrong)
                 diag::count("visual_reattach_wrong_entity");
@@ -958,7 +1223,8 @@ namespace
             attach(c, app, s.main, off, e);
             return;
         }
-
+        // A rebuilt appearance has a new skeleton: pose it too (a no-op
+        // otherwise); if it cannot be posed, re-attach on the hand slot.
         if (e.slot == SLOT_PROP && !arms::track(c, app->getSkeleton(), arms::OWNER_DUAL))
         {
             detach(c, app, e, "visual_detached_rig_changed");
@@ -972,13 +1238,17 @@ namespace
         }
     }
 
+    // ---- left-hand fighting ------------------------------------------------------
+    // The drawn weapon hangs on `hands` (Prop2, the crippled right hand). While
+    // the fighter is a left-hander, its bare blade hangs on our Prop1 slot, the
+    // `hands` entity is removed, and the pose engine mirrors the whole body.
     struct LeftyEntry
     {
         hand who;
-        Weapon* w;
+        Weapon* w;                  // shown in the left hand, or NULL
         GameData* data;
     };
-    std::map<Character*, LeftyEntry> g_lefties;
+    std::map<Character*, LeftyEntry> g_lefties;     // main loop only
 
     void noteLefty(Character* c)
     {
@@ -996,14 +1266,14 @@ namespace
     {
         if (e.w == NULL)
         {
-            arms::release(c, arms::OWNER_LEFTY);
+            arms::release(c, arms::OWNER_LEFTY);    // tracked before the attach failed
             return;
         }
         if (app != NULL)
         {
             app->detachItem(std::string(SLOT_PROP));
             Weapon* hands = c->getCurrentWeapon();
-
+            // Still drawn (the arm healed): give the right hand its blade back.
             if (hands != NULL && hands->getGameData() == e.data && app->getAttachedEntity("hands") == NULL)
             {
                 std::string bare = kit::fcsFile(hands->data, "bare sword", "");
@@ -1017,6 +1287,7 @@ namespace
         diag::count("lefty_visual_end");
     }
 
+    // True while the entry is still wanted.
     bool leftyUpdate(Character* c, LeftyEntry& e)
     {
         AppearanceBase* app = c->getAppearance();
@@ -1032,7 +1303,7 @@ namespace
             || !ensureSlot(app, SLOT_PROP, "Bip01 Prop1", Ogre::Vector3::ZERO, Ogre::Quaternion::IDENTITY))
         {
             diag::count("lefty_visual_unsupported");
-            leftyEnd(c, app, e);
+            leftyEnd(c, app, e);                    // no mirrored body without the blade
             return true;
         }
         if (e.w == NULL || app->getAttachedEntity(std::string(SLOT_PROP)) == NULL)
@@ -1054,7 +1325,7 @@ namespace
             if (diag::takeDetail())
                 kit::Diag("lefty_visual").kv("who", nameOf(c)).kv("weapon", nameOf(w)).kv("bare", bare).emit();
         }
-
+        // The game re-hangs the blade on the crippled hand now and then.
         if (app->getAttachedEntity("hands") != NULL)
         {
             app->detachItem(std::string("hands"));
@@ -1063,13 +1334,18 @@ namespace
         return true;
     }
 
+    // Every frame: the pose mode follows the fighter's combat state. A technique
+    // is playing while combatState is CHOP_WEAPON; a Nitoryu one (a right-hand
+    // sword track) is mirrored into a left-hand swing, a main-hand one holds the
+    // left blade in guard. Game pause freezes the state, so the pose freezes too.
     void updateModes()
     {
         for (std::map<Character*, Entry>::iterator it = g_entries.begin(); it != g_entries.end(); ++it)
         {
             if (it->second.off == NULL)
             {
-
+                // the watch goes on while the second blade is away, so the next draw knows whether
+                // another plugin's swing plays under it
                 Character* away = foreign::active() ? it->second.who.getCharacter() : NULL;
                 if (away != NULL && away == it->first)
                     foreign::actionNow(away, away->getCombatClass(), it->second.fg, defense::clockMs());
@@ -1078,16 +1354,18 @@ namespace
             Character* c = it->second.who.getCharacter();
             if (c == NULL || c != it->first)
             {
-
+                // Gone. Its State goes now, not at the next slow tick: the freed skeleton can be
+                // re-allocated for another character within frames.
                 arms::untrack(it->first);
                 setReady(it->first, false);
                 it->second.off = NULL;
                 diag::count("arms_released_dead");
                 continue;
             }
-
+            // Dual Wielding also grows from weapon XP that another plugin gave (throttled inside)
             ambidex::watchWeaponXp(c);
-
+            // A rebuilt appearance has a new skeleton; pose that one from this frame (a no-op when it
+            // is the tracked one), or fall back to the hand slot.
             if (it->second.slot == SLOT_PROP)
             {
                 AppearanceBase* app = c->getAppearance();
@@ -1100,20 +1378,21 @@ namespace
                     continue;
                 }
             }
-            combat::enforceSpeed(c);
-            ambidex::noteRank(c);
+            combat::enforceSpeed(c);        // the dual speed stays in the stored field
+            ambidex::noteRank(c);           // the rank-up moment
             CombatClass* cc = c->getCombatClass();
             arms::Mode m = arms::MIRROR;
             if (cc != NULL && cc->combatState == CHOP_WEAPON && cc->currentTechnique != NULL)
             {
                 CombatTechniqueData* t = cc->currentTechnique;
-
+                // A Nitoryu move's mode is its record's (`nitoryu arms`): a strike mirrors the body
+                // (SWAP), a twin, finisher or opener plays on both blades (TWIN), unless the record says else.
                 int own = combat::armsModeOf(t);
                 if (own >= 0)
                     m = (arms::Mode)own;
                 else if (combat::twinsForeignDash(c, t))
                 {
-                    m = arms::TWIN;
+                    m = arms::TWIN;         // another mod's dash, both blades
                     if (diag::stage())
                         diag::count("foreign_dash_twin_frame");
                 }
@@ -1121,14 +1400,22 @@ namespace
                     m = arms::HOLD;
             }
             else if (cc != NULL && (cc->combatState == BLOCK || cc->combatState == REACTION_BLOCK))
-                m = arms::BLOCK;
-
+                m = arms::BLOCK;        // a block is one-handed: the left arm keeps its guard
+            // The combat state can leave CHOP_WEAPON while a tailed clip's base track still plays, and
+            // the base's own ending would show. And the progress can repeat or step back for a frame
+            // (the hit, a frame with no animation update), which would flash the base's pose. So the
+            // clip's progress only goes forward, holds through stalls, and the clip stays on until the
+            // track ends (or ~0.5 s without progress).
             Entry& ent = it->second;
-
+            // The game sets the technique and starts its track at once (AttackState::initialiseAttack),
+            // but combatState turns CHOP_WEAPON later. So a tailed clip is detected by its technique and
+            // its track's progress, whatever the state: the base's first frames never show. Its
+            // follow-through plays to the track's end; then the mode blend brings the blade back to the
+            // stance.
             int curClip = cc != NULL ? combat::tailClip(cc->currentTechnique) : -1;
             CombatTechniqueData* cur = curClip >= 0 ? cc->currentTechnique : NULL;
             float curProg = cur != NULL && cc->animation != NULL ? cc->animation->getAnimationProgress(cur) : -1.0f;
-            bool dashNow = cur != NULL && curProg > 0.001f && curProg < 0.999f;
+            bool dashNow = cur != NULL && curProg > 0.001f && curProg < 0.999f;     // 0 = not playing
             arms::Mode curMode = moves::twinClip(curClip) ? arms::TWIN : arms::SWAP;
             if (dashNow && m != curMode && (moves::longTail(curClip) || (m != arms::BLOCK && !ent.dashDone)))
             {
@@ -1142,9 +1429,9 @@ namespace
             if (!dashNow)
                 ent.dashDone = false;
             if (dashNow && ent.dashDone && curProg < 0.3f && curProg < ent.dashProg - 0.3f)
-                ent.dashDone = false;
+                ent.dashDone = false;           // a new Dash with the same technique pointer
             if (dashNow && ent.dashDone)
-                dashNow = false;
+                dashNow = false;                // this Dash finished: the game's pose until it ends
             if (dashNow && cur != ent.dashTech)
             {
                 ent.dashTech = cur;
@@ -1152,7 +1439,8 @@ namespace
                 ent.dashStall = 0;
                 ent.dashClip = curClip;
             }
-
+            // A long tail (the Dash, the spin) wins over anything but a block; another tailed clip only
+            // over the plain guard or its own mode: a new swing of the other blade takes the arms at once.
             bool tailDash = moves::longTail(ent.dashClip);
             arms::Mode tailMode = moves::twinClip(ent.dashClip) ? arms::TWIN : arms::SWAP;
             bool tailFree = tailDash ? m != arms::BLOCK : (m == arms::MIRROR || m == tailMode);
@@ -1166,7 +1454,7 @@ namespace
                 }
                 else if (dashNow && p < ent.dashProg - 0.3f)
                 {
-                    ent.dashProg = p;
+                    ent.dashProg = p;           // a new Dash with the same technique
                     ent.dashStall = 0;
                 }
                 else
@@ -1196,11 +1484,12 @@ namespace
                 ent.dashTech = NULL;
             else if (ent.dashTech != NULL && !tailFree && !tailDash)
             {
-                diag::count("attack_tail_cut");
+                diag::count("attack_tail_cut");        // a new swing or a block took the arms
                 ent.dashTech = NULL;
                 ent.dashDone = true;
             }
-
+            // Down, knocked out, ragdolled, carried, getting up: no attack clip or tail goes on over the
+            // fall; the pose engine keeps only the left arm's mirror (Arms.cpp).
             const int react = reactingOf(c, cc);
             if (react == arms::REACT_DOWN)
             {
@@ -1213,15 +1502,16 @@ namespace
                 }
                 m = arms::MIRROR;
             }
-
+            // Mode, running, attack clip and parry go to the pose engine in one call.
             arms::FrameInput fin;
             fin.mode = m;
             fin.reacting = react;
             fin.inCombat = cc != NULL && cc->_isInCombatMode();
-
+            // Another plugin swings or blocks for this fighter outside the game's combat: the clips give
+            // way (Arms.cpp), and for hold_ms no draw or sheathe clip starts.
             double fgNow = defense::clockMs();
             fin.foreign = foreign::actionNow(c, cc, ent.fg, fgNow);
-
+            // the chiburi: fighting someone this frame; the sheathe asks how long ago and whether he fell
             if (fin.inCombat)
             {
                 hand foe = cc->_getAttackTarget();
@@ -1231,7 +1521,8 @@ namespace
                     ent.foe = foe;
                 }
             }
-
+            // Which way the blow comes while blocking: the block technique's impact direction, else the
+            // attacker's swing (picks the overhead / angled / scissor guard).
             fin.blockDir = -1;
             if (m == arms::BLOCK && cc != NULL)
             {
@@ -1247,7 +1538,8 @@ namespace
                         fin.blockDir = (int)ft->impactPoint(0)->direction;
                 }
             }
-
+            // Frames in which this dual fighter's target is staggering (the Cross's trigger).
+            // Per-frame counters only in stage (tests), not in players' games.
             bool stage = diag::stage();
             if (stage && cc != NULL && cc->_isInCombatMode())
             {
@@ -1256,12 +1548,14 @@ namespace
                 if (tc != NULL)
                 {
                     diag::count(tc->combatState == STUMBLE ? "target_stumble_frame" : "target_steady_frame");
-
+                    // every state the target passes through (swordStateEnum as a number)
                     char key[40];
                     sprintf_s(key, "target_state_%d", (int)tc->combatState);
                     diag::count(key);
                 }
-
+                // Mid-swing frames whose game heading points away from the target, for this dual fighter
+                // and for its opponent (a baseline: if one-handers do it as often, it is the game or the
+                // modpack, not the pose engine).
                 if (t != NULL && cc->combatState == CHOP_WEAPON)
                 {
                     float d = defense::headingDot(c, t);
@@ -1290,14 +1584,14 @@ namespace
                     }
                 }
             }
-
+            // The run holds: isRunning = moving faster than walking right now.
             CharMovement* mv = c->getMovement();
-            fin.running = foreign::running(mv != NULL && mv->isRunning(), ent.fg, fgNow);
-
+            fin.running = foreign::running(mv != NULL && mv->isRunning(), ent.fg, fgNow);     // a steady run
+            // walking up to the enemy keeps the idle stance's arms over the game's legs
             fin.moving = c->getMovementSpeed() > 1.0f;
-
+            // the rank picks the idle stance (the cached evaluation, the tier the moves use)
             fin.rank = fin.inCombat ? stance::evaluate(c, NULL).tier : 0;
-
+            // Attack clips follow the technique's own progress (Arms.h).
             int attack = -1;
             float progress = 0.0f;
             if (dashTail >= 0.0f)
@@ -1312,7 +1606,7 @@ namespace
                 if (attack >= 0)
                 {
                     progress = cc->animation->getAnimationProgress(cc->currentTechnique);
-
+                    // Expected 0-1 (_iHitYouAreYouHit compares it with 0.5); count what we see.
                     if (stage)
                         diag::count(progress > 1.05f ? "attack_progress_over1" : progress < 0.5f ? "attack_progress_first_half"
                                     : "attack_progress_second_half");
@@ -1350,11 +1644,12 @@ namespace
             }
             CombatClass* cc = c->getCombatClass();
             arms::setMode(c, arms::LEFTY, cc != NULL && cc->_isInCombatMode());
-            arms::setReacting(c, reactingOf(c, cc));
+            arms::setReacting(c, reactingOf(c, cc));        // no whole-body mirror over a fall
         }
         arms::emitClipLog();
     }
 
+    // Every counted change of the weapon in the hands, with which pair member it was and is.
     int g_drawLogLeft = 60;
 
     const char* roleOf(const Weapon* w, const Entry& e)
@@ -1386,13 +1681,18 @@ namespace
             .kv("hands_ptr", ptrText(hands)).kv("was_ptr", ptrText(e.lastHands)).emit();
     }
 
+    // The feature was turned off at run time: every blade goes back, every pose-engine State is
+    // released.
     void shutdownAll()
     {
         for (std::map<Character*, Entry>::iterator it = g_entries.begin(); it != g_entries.end(); ++it)
         {
             Character* c = it->second.who.getCharacter();
             if (c != NULL && c == it->first)
+            {
+                drawHoldDrop(c, c->getAppearance(), it->second);
                 detach(c, c->getAppearance(), it->second, "visual_detached_disabled");
+            }
             else
                 arms::untrack(it->first);
             setReady(it->first, false);
@@ -1413,10 +1713,11 @@ namespace
         diag::count("visual_shutdown");
     }
 
+    // [Animations] <key>, else the older [Test] <legacy>, else on.
     bool animSwitch(const std::string& path, const char* key, const char* legacy)
     {
         int v = GetPrivateProfileIntA("Animations", key, -1, path.c_str());
-
+        // the Cross finisher's clip is the X cut; a player's old `cross_finisher=` still counts
         if (v < 0 && strcmp(key, "x_cut") == 0)
             v = GetPrivateProfileIntA("Animations", "cross_finisher", -1, path.c_str());
         if (v < 0)
@@ -1460,21 +1761,20 @@ namespace visual
         arms::init((float)atof(square), (float)atof(uncross),
                    (unsigned)GetPrivateProfileIntA("OffHand", "blend_ms", 80, path.c_str()),
                    GetPrivateProfileIntA("OffHand", "swap_strikes", 1, path.c_str()) != 0);
-
+        // [Animations], on by default: one switch per row of Moves.h CLIPS; an older ini may still
+        // have [Test] l3_*.
         for (int k = 0; k < arms::CLIP_COUNT; ++k)
             arms::setClipOn(moves::CLIPS[k].clip, animSwitch(path, moves::CLIPS[k].iniKey, moves::CLIPS[k].legacyKey));
-
-        char style[16] = { 0 };
-        GetPrivateProfileStringA("Animations", "offhand_block_style", "mix", style, sizeof(style), path.c_str());
-        arms::setOffBlockStyle(_stricmp(style, "low") == 0 ? 1 : _stricmp(style, "forward") == 0 ? 2 : 0);
-
+        // the angled blocks' sides, if they show mirrored in game
         arms::setAngledSwap(GetPrivateProfileIntA("Animations", "angled_block_swap", 0, path.c_str()) != 0);
-
+        // the crippled arm of a left-hand fighter swings (0: the fixed pose, straight down)
         arms::setLimpSwing(GetPrivateProfileIntA("Animations", "limp_arm_swing", 1, path.c_str()) != 0);
-
+        // the dual sheathe shows the main blade in the right hand until it is home
         g_sheatheMain = GetPrivateProfileIntA("Animations", "dual_sheathe_main_blade", 1, path.c_str()) != 0;
         g_sheatheYields = GetPrivateProfileIntA("Animations", "sheathe_yields_to_jobs", 1, path.c_str()) != 0;
-
+        // the dual draw: both blades stay on the back until the hands take the hilts (0: in the hands from the start)
+        g_drawHold = GetPrivateProfileIntA("Animations", "dual_draw_hold", 1, path.c_str()) != 0;
+        // The moves themselves (not only their look): the dash changes how far the AI engages.
         combat::setDashOn(GetPrivateProfileIntA("Moves", "dash_slash", 1, path.c_str()) != 0);
     }
 
@@ -1522,7 +1822,8 @@ namespace visual
         pending.swap(g_pending);
         sheathes.swap(g_pendingSheathe);
         LeaveCriticalSection(&g_lock);
-
+        // A sheathe matters only to a character we already track; every other NPC's sheathe
+        // (hundreds a session) is dropped here.
         for (size_t i = 0; i < sheathes.size(); ++i)
         {
             Character* c = sheathes[i].getCharacter();
@@ -1572,10 +1873,17 @@ namespace visual
                 e.sheatheMain = false;
                 e.sheatheOffHome = false;
                 e.sheatheClip = arms::CLIP_SHEATHE;
+                e.drawHide = false;
+                e.drawHold = false;
+                e.drawHeld = false;
+                e.drawHidden = false;
+                e.drawStart = 0.0;
                 e.foughtAt = 0.0;
                 found = g_entries.insert(std::make_pair(c, e)).first;
             }
-
+            // With some mods setWeapon runs constantly without any change, and each call would push
+            // the settle time on, so the blade would never be attached or detached in a fight. Only a
+            // real change of the weapon in the hands counts as a draw.
             Weapon* hands = c->getCurrentWeapon();
             Entry& e = found->second;
             if (e.seenHands && hands == e.lastHands)
@@ -1583,7 +1891,9 @@ namespace visual
                 diag::count("visual_draw_same_weapon");
                 continue;
             }
-
+            // A weapon of the same kind replacing another in the hands (two identical katanas trading
+            // places, which setWeapon also does twice per vanilla draw) is no draw: update() re-binds
+            // the left blade in place, and the settle is not pushed on.
             GameData* handsData = hands != NULL ? hands->getGameData() : NULL;
             bool sameKind = e.seenHands && hands != NULL && e.lastHands != NULL && handsData == e.lastHandsData;
             logDraw(c, e, hands, sameKind);
@@ -1594,7 +1904,8 @@ namespace visual
                 continue;
             if (hands == NULL)
             {
-
+                // A sheathe is acted on at this tick, not after a settle (the left blade would stay
+                // in the hand).
                 e.settleAt = now;
                 diag::count("visual_draw_sheathe");
                 continue;
@@ -1602,6 +1913,8 @@ namespace visual
             e.settleAt = now + SETTLE_MS;
             e.refresh = true;
             e.refreshLateAt = now + REFRESH_LATE_MS;
+            // the dual draw's hold: a fresh draw (no left blade attached, no sheathe hold being cut short)
+            e.drawHide = g_drawHold && e.off == NULL && !e.sheathe && !e.drawHold;
             diag::count("visual_draw_noted");
         }
         lefty::takeNoted(noteLefty);
@@ -1616,7 +1929,7 @@ namespace visual
             }
             if (!g_pose || (g_entries.find(c) != g_entries.end() && g_entries[c].off != NULL))
             {
-                ++it;
+                ++it;                       // no pose engine, or the dual visuals still hold the left hand
                 continue;
             }
             if (leftyUpdate(c, it->second))
@@ -1630,7 +1943,7 @@ namespace visual
             Character* c = e.who.getCharacter();
             if (c == NULL || c != it->first)
             {
-                arms::untrack(it->first);
+                arms::untrack(it->first);   // gone: its appearance went with it
                 setReady(it->first, false);
                 g_entries.erase(it++);
                 continue;
@@ -1640,7 +1953,7 @@ namespace visual
                         && (e.restoreUntil == 0 || reached(now, e.restoreUntil));
             if (idle && !stance::evaluate(c, NULL).dual)
             {
-                arms::release(c, arms::OWNER_DUAL);
+                arms::release(c, arms::OWNER_DUAL);     // nothing erased while tracked
                 g_entries.erase(it++);
             }
             else

@@ -1,7 +1,11 @@
-#include "kit/input.h"
+// Threads:
+//   No hook of its own; evaluate() is called from every thread.
+//   g_lock guards g_cache, g_playerOff, g_playerAny, g_optIn, g_listPath, g_pathLogged; Info is copied out by value.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <core/Functions.h>
-#include <kenshi/Kenshi.h>
+#include <kenshi/Kenshi.h>     // KenshiLib::GetKenshiVersion
 
 #include <kenshi/Character.h>
 #include <kenshi/CharStats.h>
@@ -43,28 +47,35 @@ namespace
     CRITICAL_SECTION g_lock;
     std::map<Character*, Cached> g_cache;
     std::set<Character*> g_playerOff;
-    std::set<Character*> g_playerAny;
+    std::set<Character*> g_playerAny;   // player characters who pair blunt and hackers too
     bool g_allowed[NUM_SKILL_TYPES] = { false };
-    int g_forceTier = 0;
-    float g_followUpChance = -1.0f;
-    float g_attackCap = 1.5f;
-    float g_blockCap = 4.0f;
-    float g_speedBonus = 0.3f;
-    bool g_layout = true;
+    int g_forceTier = 0;                // [Test] force_tier
+    float g_followUpChance = -1.0f;     // [Test] follow_up_chance (< 0: design values)
+    float g_attackCap = 1.5f;           // cfg::DUAL_ATTACK_CAP ([Speed] dual_attack_cap), applySettings
+    float g_blockCap = 4.0f;            // cfg::DUAL_BLOCK_CAP
+    float g_speedBonus = 0.3f;          // cfg::SPEED_BONUS
+    bool g_layout = true;                           // game version 1.0.65
     std::string g_version;
 
+    // Which NPCs may fight dual. all = any NPC with an allowed pair that passes the stat gate;
+    // authored = only NPCs another mod opted in; off = none. Opted-in NPCs (their CHARACTER or
+    // FACTION record listed in [NPC] opt_in or in Nitoryu.mod's opt-in squad) skip the stat gate and
+    // the max_tier cap.
     enum NpcMode { NPC_OFF, NPC_AUTHORED, NPC_ALL };
-    NpcMode g_npcMode = NPC_ALL;
-    int g_npcMaxTier = 3;
-    const char* OPT_IN_RECORD = "11-Nitoryu.mod";
-    std::set<std::string> g_iniOptIn;
-    std::set<std::string> g_optIn;
-    int g_npcRecordLeft = 12;
+    NpcMode g_npcMode = NPC_ALL;                    // [NPC] dual
+    int g_npcMaxTier = 3;                           // cfg::NPC_MAX_TIER ([NPC] max_tier)
+    const char* OPT_IN_RECORD = "11-Nitoryu.mod";   // SQUAD_TEMPLATE: the NPC opt-in squad
+    std::set<std::string> g_iniOptIn;               // [NPC] opt_in (string ids)
+    std::set<std::string> g_optIn;                  // ini + the record's refs, under g_lock
+    int g_npcRecordLeft = 12;                       // npc_record detail lines
 
-    const std::string PATH_KEY = "nitoryu path";
-    std::map<std::string, float> g_iniPath;
-    std::map<std::string, float> g_listPath;
-    std::set<std::string> g_pathLogged;
+    // A Path set for a character, as a floor on the computed one. The same three routes as its Dual
+    // Wielding (Ambidex.cpp `authored`): the ini, a field of the CHARACTER or FACTION record, the second
+    // value of a `squad` / `squad2` reference in the lists of Nitoryu.mod.
+    const std::string PATH_KEY = "nitoryu path";    // float, below 0 = not set
+    std::map<std::string, float> g_iniPath;         // [NPC] path=<string id>:<value>,... (read once)
+    std::map<std::string, float> g_listPath;        // record id -> Path from the lists; under g_lock
+    std::set<std::string> g_pathLogged;             // records with a path_authored line; under g_lock
 
     struct Lock
     {
@@ -75,6 +86,8 @@ namespace
     float clamp01x(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
     float cap100(float v) { return clamp01x(v, 0.0f, 100.0f); }
 
+    // The tier lists are settings (cfg::TIER_DP, cfg::TIER_MIN_AMBI; index 0 = T1). A list shorter
+    // than five leaves the missing tiers out of reach, never open to everyone.
     float tierDp(int index)
     {
         return index >= 0 && index < cfg::items(cfg::TIER_DP) ? cfg::item(cfg::TIER_DP, index) : 1000.0f;
@@ -102,6 +115,7 @@ namespace
         return r;
     }
 
+    // The weapons listed in an inventory section, in grid order.
     int weaponsIn(Inventory* inv, const char* name, Weapon** out, int max)
     {
         InventorySection* s = inv->getSection(std::string(name));
@@ -135,6 +149,7 @@ namespace
     float effAttack(CharStats* st) { return st->getStat(STAT_MELEE_ATTACK, false) + (float)st->skillBonusAttack_melee(true); }
     float effDefence(CharStats* st) { return st->getStat(STAT_MELEE_DEFENCE, false) + (float)st->skillBonusDefence(true); }
 
+    // The Path (docs/BALANCE.md): a weighted average of the inputs, each capped at 100.
     float dpOf(float skillLow, float dex, float atk, float def, float ambiEff)
     {
         core::PathWeights w = { cfg::f(cfg::W_SKILL), cfg::f(cfg::W_DEX), cfg::f(cfg::W_ATTACK), cfg::f(cfg::W_DEFENCE),
@@ -142,12 +157,15 @@ namespace
         return core::pathOf(w, skillLow, dex, atk, def, ambiEff);
     }
 
+    // Beginners are slower (x0.85 at DP 0, x1 at DP 30); masters with high Dexterity are
+    // faster, up to x(1 + dual_speed_bonus) at Dex 100 + DP 100. dex is already capped at 100.
     float speedFactorOf(float dp, float dex)
     {
         return core::speedFactor(dp, dex, cfg::f(cfg::SPEED0), cfg::f(cfg::SPEED_FULL_DP), cfg::f(cfg::SPEED_FROM),
                                  g_speedBonus);
     }
 
+    // The highest tier the effective Dual Wielding allows, at most `t`.
     int capByAmbi(int t, float ambiEff)
     {
         float minAmbi[tuning::TIERS];
@@ -159,12 +177,13 @@ namespace
 
     std::string recordIdOf(GameData* d) { return d != NULL ? d->stringID : std::string(); }
 
+    // The NPC's own record or its faction's record is on the opt-in list.
     bool optedIn(Character* c)
     {
         std::string own = recordIdOf(c->getGameData());
         Faction* f = c->getFaction();
         std::string fac = f != NULL ? recordIdOf(f->data) : std::string();
-
+        // the same opt-in as a field of the CHARACTER or FACTION record itself (`nitoryu dual wielder`)
         bool byField = kit::fcsBool(c->getGameData(), "nitoryu dual wielder", false)
                        || (f != NULL && kit::fcsBool(f->data, "nitoryu dual wielder", false));
         if (byField)
@@ -180,7 +199,7 @@ namespace
                 log = true;
             }
         }
-
+        // What a spawned NPC's record id is (the template's, or a copy's).
         if (log)
             kit::Diag("npc_record").kv("who", c->displayName).kv("record", own)
                 .kv("record_name", c->getGameData() != NULL ? c->getGameData()->name : std::string())
@@ -188,6 +207,8 @@ namespace
         return r;
     }
 
+    // The Path set for this character, below 0 when none is. The character's own record wins over its
+    // faction's; for one record the player's ini wins over a mod's field, and the field over the lists.
     float pathFloor(Character* c, const char*& from)
     {
         static const char* const FROM[2][3] = { { "ini_character", "character", "list_character" },
@@ -210,7 +231,8 @@ namespace
                 from = FROM[i][1];
                 return cap100(v);
             }
-
+            // The game's string is copied before the lock; nothing of the game is read under it, so a fault
+            // caught by computeSafe's __except can never leave g_lock held (its destructor would not run).
             const std::string id = recs[i]->stringID;
             Lock l;
             it = g_listPath.find(id);
@@ -226,9 +248,9 @@ namespace
     stance::Info compute(Character* c, Weapon* mainOverride)
     {
         if (!g_layout)
-            return blank("game_version");
+            return blank("game_version");   // the left blade cannot be built on this layout
         if (stance::rigOf(c) == stance::RIG_NEVER)
-            return blank("race_refused");
+            return blank("race_refused");   // the RACE record's `nitoryu rig` = 2
         CharStats* st = c->getStats();
         Inventory* inv = c->getInventory();
         if (st == NULL || inv == NULL)
@@ -254,29 +276,34 @@ namespace
         else if (hands->data != NULL && hands->data == a->data) { r.main = a; r.off = b; diag::count("pair_match_by_data"); }
         else if (hands->data != NULL && hands->data == b->data) { r.main = b; r.off = a; diag::count("pair_match_by_data"); }
         else return blank("hands_not_in_pair");
-
+        // Two on the back win over a hip weapon (2+1 carries: the back pair is used).
         r.offFromHip = nb < 2 && r.off == hip[0];
 
+        // the weapon's own record first (`nitoryu dual wield`), then the category list
         if (stance::weaponRefused(r.main) || stance::weaponRefused(r.off))
             return blank("weapon_refused");
         if (!stance::weaponAllowedFor(c, r.main) || !stance::weaponAllowedFor(c, r.off))
             return blank("type_not_allowed");
         if (r.main->is2HandedOnly() || r.off->is2HandedOnly())
             return blank("two_handed_only");
-
+        // A second weapon with no `bare sword` mesh cannot be shown in the left hand: such a pair
+        // fights one-handed (a clean fallback, no half-built stance).
         if (kit::fcsFile(r.off->data, "bare sword", "").empty())
             return blank("no_bare_mesh");
         MedicalSystem* med = c->getMedical();
         if (med != NULL && (!med->isLeftArmOk() || !med->isRightArmOk()))
             return blank("arm");
-
+        // CharStats::rangedMode is not checked: it is the vanilla "Ranged" behaviour button (keep
+        // distance, prefer crossbows), not "a crossbow is in hand", and a crossbow in hand already
+        // fails the pair check above.
         bool player = c->isPlayerCharacter();
         if (player && !stance::playerAllowed(c))
             return blank("toggled_off");
 
         r.skillMain = st->getStat(stance::statFor(r.main->category), false);
         r.skillOff = st->getStat(stance::statFor(r.off->category), false);
-
+        // Effective values, as the game's own combat formulas use them:
+        // Dex with health and age, attack/defence with gear, weapon and indoor bonuses.
         float dex = effDex(st);
         float atk = effAttack(st);
         float def = effDefence(st);
@@ -299,13 +326,16 @@ namespace
             }
         }
 
+        // Inputs are capped at 100: modded games go past it. The Dual Wielding that counts is the
+        // effective one: overload and heavy armour cut it hard (docs/BALANCE.md).
         ambidex::Effective amb = ambidex::effective(c);
         r.ambi = amb.a;
         r.ambiEff = amb.eff;
         r.overload = amb.overload;
         r.dex = cap100(dex);
         r.dp = dpOf(s, dex, atk, def, amb.eff);
-
+        // A Path set for the character is a floor on the computed one, and the rank it gives stands
+        // above the Dual Wielding cap and [NPC] max_tier (a mod's master is a master).
         const char* pathFrom = "";
         float pathMin = pathFloor(c, pathFrom);
         int pathTier = pathMin >= 0.0f ? stance::tierOf(pathMin) : 0;
@@ -313,7 +343,7 @@ namespace
         {
             diag::count(pathFrom[0] == 'i' ? "path_authored_ini" : pathFrom[0] == 'l' ? "path_authored_list" : "path_authored_field");
             bool first;
-            const std::string record = recordIdOf(c->getGameData());
+            const std::string record = recordIdOf(c->getGameData());    // read before the lock
             {
                 Lock l;
                 first = g_pathLogged.size() < 24 && g_pathLogged.insert(record).second;
@@ -325,28 +355,28 @@ namespace
         }
         if (g_forceTier > 0)
         {
-
+            // Test aid: at least that tier's DP, so its techniques (min skill = DP gate) qualify.
             float floor = tierDp(g_forceTier - 1);
             if (r.dp < floor)
                 r.dp = floor;
         }
         r.tierByDp = stance::tierOf(r.dp);
-        r.tier = capByAmbi(r.tierByDp, r.ambiEff);
+        r.tier = capByAmbi(r.tierByDp, r.ambiEff);         // tiers need Dual Wielding
         if (r.tier < r.tierByDp)
             r.tierCap = "ambi";
         if (!player && !r.optedIn && r.tier > g_npcMaxTier)
         {
-            r.tier = g_npcMaxTier;
+            r.tier = g_npcMaxTier;                          // [NPC] max_tier
             r.tierCap = "npc";
         }
         if (pathTier > r.tier)
         {
-            r.tier = pathTier;
+            r.tier = pathTier;                              // the set Path's own rank, above both caps
             if (r.tier >= r.tierByDp)
                 r.tierCap = "";
         }
         if (g_forceTier > r.tier)
-            r.tier = g_forceTier;
+            r.tier = g_forceTier;                           // test aid: above every cap
         if (r.tier < r.tierByDp)
             diag::count(r.tierCap[0] == 'n' ? "tier_capped_npc" : "tier_capped_ambi");
         r.clumsy = core::clumsiness(cfg::f(cfg::CLUMSY0), cfg::f(cfg::CLUMSY_SLOPE), r.dp);
@@ -356,6 +386,12 @@ namespace
         return r;
     }
 
+    // setWeapon also runs while characters load, so a read can meet a half-built
+    // object: fault into a counter instead of the game. No C++ objects live in
+    // guarded()'s frame (C2712).
+    // With /EHsc the frames between the fault and this __except are left without their destructors, so
+    // compute() and what it calls never read game memory while one of our locks is held. A stack overflow
+    // is not caught: swallowed, the next one would end the game with no dump.
     struct ComputeCtx
     {
         Character* c;
@@ -399,9 +435,11 @@ namespace stance
     bool knownLayout() { return g_layout; }
     std::string gameVersion() { return g_version; }
 
+    // The settings this module keeps a copy of (cfg: the table < FCS < the ini). Called from init and
+    // again by the main loop when cfg::refresh saw a change (a load, another record).
     void applySettings()
     {
-
+        // the allow-list of weapon categories
         bool allowed[NUM_SKILL_TYPES] = { false };
         for (int k = 0; k < cfg::items(cfg::WEAPON_CATEGORIES); ++k)
         {
@@ -412,7 +450,7 @@ namespace stance
         float attackCap = std::max(0.1f, cfg::f(cfg::DUAL_ATTACK_CAP));
         float blockCap = std::max(0.1f, cfg::f(cfg::DUAL_BLOCK_CAP));
         float speedBonus = std::max(0.0f, cfg::f(cfg::SPEED_BONUS));
-
+        // [NPC]
         const std::string& m = cfg::text(cfg::NPC_MODE);
         NpcMode mode = m == "off" ? NPC_OFF : m == "authored" ? NPC_AUTHORED : NPC_ALL;
         int mt = cfg::i(cfg::NPC_MAX_TIER);
@@ -426,7 +464,7 @@ namespace stance
             g_speedBonus = speedBonus;
             g_npcMode = mode;
             g_npcMaxTier = mt;
-            g_cache.clear();
+            g_cache.clear();        // a cached stance was computed with the old values
         }
         char b[160];
         sprintf_s(b, "dual=%s max_tier=%d opt_in_ini=%d", mode == NPC_OFF ? "off" : mode == NPC_AUTHORED ? "authored" : "all",
@@ -449,7 +487,7 @@ namespace stance
             float c = (float)atof(chance);
             g_followUpChance = c < 0.0f ? -1.0f : (c > 1.0f ? 1.0f : c);
         }
-
+        // [NPC] opt_in stays an ini list (and the opt-in squad's references)
         char ids[2048] = { 0 };
         GetPrivateProfileStringA("NPC", "opt_in", "", ids, sizeof(ids), path.c_str());
         std::string cur;
@@ -468,13 +506,15 @@ namespace stance
                 cur += *q;
         }
         g_optIn = g_iniOptIn;
-
+        // [NPC] path=<string id>:<value>, CHARACTER or FACTION ids, comma separated
         int badPath = cfg::readIdValues(path, "NPC", "path", g_iniPath);
         if (!g_iniPath.empty() || badPath > 0)
             kit::Diag("npc_path").kv("from_ini", (int)g_iniPath.size()).kv("bad_entries", badPath).emit();
         applySettings();
     }
 
+    // Main loop, after each game load (with the CONSTANTS read): the ini list plus every
+    // CHARACTER and FACTION another mod added to the opt-in squad's reference lists.
     void refreshOptIn()
     {
         if (ou == NULL)
@@ -482,11 +522,14 @@ namespace stance
         GameData* d = ou->gamedata.getData(OPT_IN_RECORD);
         std::set<std::string> ids = g_iniOptIn;
         int fromData = 0;
-
+        // Dual Wielding in plain FCS. A character's val0 (2 or more; FCS adds an entry with 1) is its
+        // Dual Wielding; the four lists below also give their own value to every CHARACTER and FACTION
+        // in them, and opt them in. A record in two lists takes the higher value.
         struct { const char* record; float skill; } LISTS[] = {
             { OPT_IN_RECORD, -1.0f }, { "23-Nitoryu.mod", 40.0f }, { "24-Nitoryu.mod", 60.0f },
             { "25-Nitoryu.mod", 80.0f }, { "26-Nitoryu.mod", 100.0f } };
-
+        // In `squad` and `squad2` (the lists FCS shows two values for) the second value, 2 or more, is
+        // the character's Path. A record in two lists takes the higher value.
         std::map<std::string, float> skills, paths;
         for (int r = 0; r < 5; ++r)
         {
@@ -556,6 +599,9 @@ namespace stance
         return s.dp < lim ? s.dp : lim;
     }
 
+    // The dual speed factor may slow a fighter below the game's result freely,
+    // but a bonus never lifts it past the cap; if the game (or another mod)
+    // already returned more than the cap, that result is kept.
     float applySpeed(float gameResult, float factor, bool isBlock, float capBonus)
     {
         float r = gameResult * factor;
@@ -781,7 +827,7 @@ namespace stance
         }
         float dp = dpOf(skill < 0.0f ? 0.0f : skill, effDex(st), effAttack(st), effDefence(st), ambidex::effective(c).eff);
         const char* from = "";
-        float pathMin = pathFloor(c, from);
+        float pathMin = pathFloor(c, from);                 // the window shows what the fight uses
         return pathMin > dp ? pathMin : dp;
     }
 
@@ -797,7 +843,7 @@ namespace stance
         const char* from = "";
         float pathMin = c != NULL ? pathFloor(c, from) : -1.0f;
         if (pathMin >= 0.0f && tierOf(pathMin) > p.tier)
-            p.tier = tierOf(pathMin);
+            p.tier = tierOf(pathMin);                       // as in compute
         if (g_forceTier > p.tier)
             p.tier = g_forceTier;
         p.nextAmbi = p.tier < p.tierByDp && amb < tierMinAmbi(p.tier) ? tierMinAmbi(p.tier) : 0.0f;

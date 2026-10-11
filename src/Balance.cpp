@@ -1,4 +1,4 @@
-#include "kit/input.h"
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,12 +11,13 @@
 
 namespace
 {
-
+    // Fixed storage: the combat threads read a curve while the main loop may replace it after a load;
+    // a short mix of old and new anchors is harmless, a moved vector is not.
     typedef core::Curve Curve;
 
     Curve g_curve[balance::CURVE_COUNT];
     float g_guard[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-    float g_dexBonus = 0.12f;
+    float g_dexBonus = 0.12f;       // cfg::DEX_BONUS
     std::string g_overrides;
 
     const cfg::Id SETTING[balance::CURVE_COUNT] = { cfg::OFF_HAND_SHARE, cfg::TWIN_SHARE, cfg::OFF_HAND_DAMAGE,
@@ -45,7 +46,7 @@ namespace balance
         g_overrides.clear();
         for (int i = 0; i < CURVE_COUNT; ++i)
         {
-
+            // A malformed curve (FCS or the ini) keeps the table's own.
             bool ok = parse(cfg::text(SETTING[i]).c_str(), g_curve[i]);
             if (!ok)
                 parse(cfg::defaultText(SETTING[i]), g_curve[i]);
@@ -56,11 +57,11 @@ namespace balance
         note("dex_bonus", cfg::DEX_BONUS, true);
         bool six = cfg::items(cfg::DIVIDED_GUARD) == 6;
         for (int i = 0; i < 6; ++i)
-            if (six)
+            if (six)    // six numbers, tiers T0..T5
                 g_guard[i] = cfg::item(cfg::DIVIDED_GUARD, i);
         if (!six)
         {
-
+            // not six numbers: the table's own
             const char* p = cfg::defaultText(cfg::DIVIDED_GUARD);
             for (int i = 0; i < 6 && *p; ++i)
             {

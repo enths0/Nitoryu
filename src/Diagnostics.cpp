@@ -1,4 +1,4 @@
-#include "kit/input.h"
+#include "kit/input.h"   // Windows.h with NOMINMAX first (the project also defines it)
 
 #include "Diagnostics.h"
 #include "kit/diag.h"
@@ -16,6 +16,7 @@ namespace
     unsigned g_mainThread = 0;
     diag::Level g_level = diag::NORMAL;
 
+    // The hook totals, by diag::Hook; names in the same order.
     const char* HOOK_NAMES[diag::HK_COUNT] = {
         "set_weapon", "weight_speed", "attack_speed", "melee_attack", "block_chance",
         "equipped_skill", "choose_attack", "hit_by", "i_hit", "init_block", "serialise", "update_stats",
@@ -26,7 +27,7 @@ namespace
     volatile LONGLONG g_hookOurs[diag::HK_COUNT];
     volatile LONGLONG g_hookPassed[diag::HK_COUNT];
     volatile LONGLONG g_hookThrown[diag::HK_COUNT];
-    volatile LONGLONG g_hookOffMain[diag::HK_COUNT];
+    volatile LONGLONG g_hookOffMain[diag::HK_COUNT];    // calls on a thread other than the main loop's
 
     struct Lock
     {
@@ -66,7 +67,9 @@ namespace diag
 
     bool stage() { return g_level >= STAGE; }
 
-    int budget(int base) { return g_level == OFF ? 0 : g_level == VERBOSE ? base * 10 : base; }
+    // A test fight of a dozen fighters spends the base budget in minutes, so the test levels get more.
+    // The release level (normal) keeps the base budgets.
+    int budget(int base) { return g_level == OFF ? 0 : g_level == VERBOSE ? base * 100 : g_level == STAGE ? base * 20 : base; }
 
     void count(const char* reason)
     {
@@ -97,7 +100,8 @@ namespace diag
             copy = g_counts;
             g_counts.clear();
         }
-
+        // Lines other threads queued for the main loop (kit/log.h), totals since start; dropped lines are
+        // lost to a full ring.
         int queued = 0, dropped = 0;
         kit::log::totals(queued, dropped);
         if (queued > 0 || dropped > 0)
@@ -143,7 +147,7 @@ namespace diag
         std::string line("hooks");
         for (int h = 0; h < HK_COUNT; ++h)
         {
-
+            // Exits first: a call that ends between the two reads then counts as open, never as negative open.
             LONGLONG ours = g_hookOurs[h], passed = g_hookPassed[h], thrown = g_hookThrown[h];
             LONGLONG calls = g_hookCalls[h];
             if (calls == 0)
@@ -154,7 +158,7 @@ namespace diag
             else
                 sprintf_s(b, " %s=%lld/%lld/%lld", HOOK_NAMES[h], calls, ours, passed);
             line += b;
-
+            // Where it ran (calls before the first main-loop frame count as main): @main, @other, @both:<off>
             LONGLONG off = g_hookOffMain[h];
             if (off == 0)
                 line += "@main";

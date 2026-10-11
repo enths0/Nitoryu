@@ -1,3 +1,17 @@
+// Nitoryu runtime helpers. VS2010 (v100) safe.
+//
+// Log lines from any thread without racing KenshiLib's log streams.
+//
+// KenshiLib's DebugLog / ErrorLog write one global ofstream and one global
+// stringstream with no lock, and combat hooks, AI and physics run off the main
+// loop's thread. So: on the main thread a line is written at once; on any other
+// thread it is queued in a fixed ring and written by the next main-loop frame.
+// A full ring drops the new line and counts it.
+//
+// Use: call kit::log::tick() first thing in the main-loop hook, every frame
+// (the first call records the main thread). Log with kit::log::line() /
+// kit::log::error() instead of DebugLog / ErrorLog. Before the first tick every
+// line is written at once, as DebugLog does (start-up runs on one thread).
 #pragma once
 
 #ifndef NOMINMAX
@@ -18,16 +32,19 @@ namespace kit
         {
             enum { SLOTS = 256 };
 
+            // POD on purpose: a function-local static of a POD type is zero-filled before
+            // any code runs, so there is no unguarded initialiser (VS2010 has no thread-safe
+            // statics). A slot holds a heap string; its first char is 'E' (error) or 'D'.
             struct State
             {
                 CRITICAL_SECTION lock;
-                volatile LONG ready;
+                volatile LONG ready;        // 1 once the lock exists and the main thread is known
                 DWORD mainThread;
                 std::string* ring[SLOTS];
-                unsigned head;
-                volatile LONG used;
-                LONG queued;
-                LONG dropped;
+                unsigned head;              // next slot to write out
+                volatile LONG used;         // lines in the ring
+                LONG queued;                // lines ever queued
+                LONG dropped;               // lines lost to a full ring
             };
 
             inline State& state()
@@ -44,6 +61,8 @@ namespace kit
                     DebugLog(tagged.substr(1));
             }
 
+            // Takes the queued lines out under the lock and writes them after it, so a hook
+            // thread never waits on the file. Main thread only (the one writer keeps the order).
             inline void drain(State& s)
             {
                 std::string* out[SLOTS];
@@ -76,7 +95,7 @@ namespace kit
                 }
                 if (GetCurrentThreadId() == s.mainThread)
                 {
-                    if (s.used > 0)
+                    if (s.used > 0)             // keep the order: older queued lines first
                         drain(s);
                     write(tagged);
                     return;
@@ -98,6 +117,7 @@ namespace kit
             }
         }
 
+        // Every main-loop frame, on the main loop's thread.
         inline void tick()
         {
             detail::State& s = detail::state();
@@ -117,6 +137,7 @@ namespace kit
         inline void error(const std::string& message) { detail::put('E', message); }
         inline void error(const char* message) { detail::put('E', message ? message : ""); }
 
+        // Totals since start, for a counters line: lines queued from other threads, lines dropped.
         inline void totals(int& queued, int& dropped)
         {
             detail::State& s = detail::state();

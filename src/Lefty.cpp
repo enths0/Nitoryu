@@ -1,4 +1,10 @@
-#include "kit/input.h"
+// Left-hand fighting (see Lefty.h). The hook target, the melee task's weapon choice, is found by RTTI
+// name on any build; weapon techniques themselves are not arm-gated.
+// Threads:
+//   choose_hook (the melee task's weapon choice) - the AI's thread.
+//   g_lock guards g_cache and g_noted (written there, read by the main loop's tick).
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -30,12 +36,12 @@ namespace
     const unsigned CACHE_MS = 500;
 
     volatile bool g_enabled = true;
-
-    bool g_on = true;
-    float g_minA = 50.0f;
-    float g_dmgMin = 0.7f;
-    float g_speedMin = 0.85f;
-    float g_blockMin = 10.0f;
+    // copies of the settings (cfg: the table < FCS < the ini), set by applySettings
+    bool g_on = true;               // cfg::LEFTY_ON ([LeftHand] enabled)
+    float g_minA = 50.0f;           // cfg::LEFTY_MIN_AMBI
+    float g_dmgMin = 0.7f;          // cfg::LEFTY_DAMAGE_AT_MIN: damage x this at min_ambidexterity, 1 at 100
+    float g_speedMin = 0.85f;       // cfg::LEFTY_SPEED_AT_MIN
+    float g_blockMin = 10.0f;       // cfg::LEFTY_BLOCK_AT_MIN: defence points lost at min, 0 at 100
 
     struct Cached
     {
@@ -56,7 +62,7 @@ namespace
 
     bool oneHandedAllowed(Weapon* w)
     {
-        return w != NULL && stance::weaponAllowed(w) && !w->is2HandedOnly();
+        return w != NULL && stance::weaponAllowed(w) && !w->is2HandedOnly();    // the weapon's own record first
     }
 
     bool carriesOneHanded(Character* c)
@@ -83,7 +89,8 @@ namespace
         a = 0.0f;
         if (!g_enabled || !g_on || c == NULL)
             return false;
-
+        // Left-hand fighting is the mirror of every pose; a race whose record takes it out of the
+        // mirror (`nitoryu rig` 1 or 2) does not fight left-handed.
         if (stance::rigOf(c) != stance::RIG_AUTO)
             return false;
         MedicalSystem* med = c->getMedical();
@@ -91,7 +98,7 @@ namespace
             return false;
         if (c->isPlayerCharacter() && !stance::playerAllowed(c))
             return false;
-        a = ambidex::effective(c).eff;
+        a = ambidex::effective(c).eff;      // overload and heavy armour count here too
         if (a < g_minA)
         {
             diag::count("lefty_ambidexterity_low");
@@ -129,6 +136,12 @@ namespace
         return ok;
     }
 
+    // ---- the weapon choice of Task_MeleeAttack / Task_FocusedMeleeAttack -------
+    // Its first test is `right arm ok` (Character::medical.rightArmOk): when false
+    // it sheathes and goes unarmed. For a left-hander it runs as if the arm worked,
+    // so the vanilla choice (primary, else secondary) draws the weapon.
+
+    // The right-arm flag goes back even when the game throws inside.
     struct ArmOverride
     {
         bool* flag;
@@ -173,6 +186,7 @@ namespace lefty
         applySettings();
     }
 
+    // From cfg (the table < FCS < the ini); at start and after a change.
     void applySettings()
     {
         g_on = cfg::b(cfg::LEFTY_ON);
@@ -186,14 +200,16 @@ namespace lefty
 
     bool installHooks()
     {
-
+        // Off in the ini at start: no hook at all. Turned off in FCS (read after the hooks are
+        // in): the hook stays and compute() says no.
         if (!g_on)
             return true;
         void** vt = kit::findVtable(".?AVTask_MeleeAttack@@");
         void** vtFocused = kit::findVtable(".?AVTask_FocusedMeleeAttack@@");
         void* target = vt != NULL ? kit::followThunk(vt[5]) : NULL;
         void* focused = vtFocused != NULL ? kit::followThunk(vtFocused[5]) : NULL;
-
+        // The function's first test reads the right-arm flag: Character::medical
+        // (+0x458) .rightArmOk (+0x165) = +0x5BD. Hook only if that is there.
         const unsigned char armDisp[4] = { 0xBD, 0x05, 0x00, 0x00 };
         bool looksRight = target != NULL && kit::codeContains(target, 0x80, armDisp, 4);
         char where[160];
@@ -206,7 +222,7 @@ namespace lefty
             kit::log::error("Nitoryu: left-hand fighting is off: the melee task's weapon choice was not recognised on this game build");
             return false;
         }
-
+        // hook: Task_MeleeAttack vtable slot 5 (found by RTTI)
         if (hooks::add("Task_MeleeAttack (vtable slot 5)", "lefty", target, reinterpret_cast<void*>(choose_hook), reinterpret_cast<void**>(&choose_orig))
             != KenshiLib::SUCCESS)
         {

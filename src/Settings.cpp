@@ -1,4 +1,4 @@
-#include "kit/input.h"
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 
@@ -26,7 +26,7 @@ namespace
     struct Row
     {
         const char* name;
-        char type;
+        char type;              // F I B C L S
         const char* def;
         const char* fcs;
         const char* iniSection;
@@ -50,11 +50,12 @@ namespace
 
     State g_state;
     std::string g_ini;
-    bool g_found = false;
+    bool g_found = false;       // GLOBAL CONSTANTS was read at least once
     bool g_logged = false;
 
     bool isText(char type) { return type == 'C' || type == 'L' || type == 'S'; }
 
+    // Each number's range (SettingsBounds.h). A row without one (B, S) has none.
     struct Range
     {
         double lo, hi;
@@ -100,6 +101,8 @@ namespace
         return numText(g.lo) + ".." + numText(g.hi);
     }
 
+    // A value that had to be changed is said once per setting and value (refresh() reads FCS again on every
+    // slow tick); main loop and start only, like put().
     std::set<std::string> g_said;
 
     void tell(const char* what, int id, const std::string& raw, const std::string& used, cfg::Source src)
@@ -123,6 +126,9 @@ namespace
         return end != p && finiteNum(out);
     }
 
+    // One value, from its text form (the table's default, an ini value, or an FCS value printed).
+    // A value from FCS or the ini that is not a number (or not 0/1 for a switch) falls back to the default,
+    // one outside its range is clamped to it; both are logged once.
     void put(State& s, int id, const std::string& v, cfg::Source src)
     {
         const Row& r = ROWS[id];
@@ -158,7 +164,7 @@ namespace
         s.text[id] = v;
         if (r.type == 'C')
         {
-
+            // DP:value pairs: each value into the range; the text is rebuilt only when one was moved.
             std::string out;
             bool clamped = false, bad = false;
             const char* p = v.c_str();
@@ -222,6 +228,9 @@ namespace
         }
     }
 
+    // The player's Nitoryu.ini against the keys the plugin reads (IniKeysGen.h): a key it does not know
+    // (a typo, or a key of an old version), a [Test] clip key that an [Animations] key replaced, and a key
+    // written twice in one section (Windows reads the first). Once at start; at most 20 lines.
     bool knownKey(const std::string& full)
     {
         static const char* const KNOWN[] = {
@@ -315,6 +324,8 @@ namespace
         }
     }
 
+    // The record's value as text, by the field's declared bucket; a number written into the other numeric
+    // bucket (an int field holding a float, or the reverse) is still read. False: the record has no such key.
     bool fromRecord(const GameData* d, const Row& r, std::string& out)
     {
         std::string key(r.fcs);
@@ -352,19 +363,83 @@ namespace
         return false;
     }
 
-    void layIni(State& s)
+    // The slow tick rereads the ini. One GetPrivateProfileStringA per row reopens and parses the file each
+    // time (8-11 ms in one frame for ~130 rows), so each row's value is read from one pass over the file's
+    // sections, and only when the file's write time or size changed (the settings page writes the ini, which
+    // changes both). Same answers as GetPrivateProfileStringA: case-insensitive section and key, the first of
+    // a duplicated key, the value trimmed and one pair of quotes off.
+    std::string lowered(const char* t)
     {
-        char buf[512];
+        std::string out(t);
+        for (size_t k = 0; k < out.size(); ++k)
+            out[k] = (char)tolower((unsigned char)out[k]);
+        return out;
+    }
+
+    std::vector<std::string> g_iniValue;    // per row, from the last read ("" = not in the ini)
+    FILETIME g_iniWrite = { 0, 0 };
+    DWORD g_iniSize = 0;
+    bool g_iniRead = false;
+
+    void readIniValues()
+    {
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        bool have = GetFileAttributesExA(g_ini.c_str(), GetFileExInfoStandard, &fa) != 0;
+        if (g_iniRead && have && CompareFileTime(&fa.ftLastWriteTime, &g_iniWrite) == 0 && fa.nFileSizeLow == g_iniSize)
+            return;
+        g_iniRead = true;
+        g_iniWrite = have ? fa.ftLastWriteTime : FILETIME();
+        g_iniSize = have ? fa.nFileSizeLow : 0;
+        g_iniValue.assign(cfg::COUNT, std::string());
+        if (!have)
+            return;
+        std::set<std::string> done;         // sections already read
+        std::vector<char> body(65536);
         for (int id = 0; id < cfg::COUNT; ++id)
         {
             const Row& r = ROWS[id];
             if (r.iniKey[0] == '\0')
                 continue;
-            buf[0] = '\0';
-            GetPrivateProfileStringA(r.iniSection, r.iniKey, "", buf, sizeof(buf), g_ini.c_str());
-            if (buf[0] != '\0')
-                put(s, id, buf, cfg::INI);
+            std::string sec = lowered(r.iniSection);
+            if (!done.insert(sec).second)
+                continue;
+            DWORD n = GetPrivateProfileSectionA(r.iniSection, &body[0], (DWORD)body.size(), g_ini.c_str());
+            if (n == 0)
+                continue;
+            std::set<std::string> seen;     // keys of this section already met
+            for (const char* e = &body[0]; *e != '\0'; e += strlen(e) + 1)
+            {
+                std::string entry(e);
+                size_t eq = entry.find('=');
+                if (eq == std::string::npos)
+                    continue;
+                std::string key = lowered(trim(entry.substr(0, eq)).c_str());
+                if (key.empty() || key[0] == ';' || key[0] == '#')
+                    continue;
+                std::string value = trim(entry.substr(eq + 1));
+                if (value.size() >= 2 && (value[0] == '"' || value[0] == '\'') && value[value.size() - 1] == value[0])
+                    value = value.substr(1, value.size() - 2);
+                if (value.size() > 511)
+                    value.resize(511);
+                if (!seen.insert(key).second)
+                    continue;               // a duplicated key: the first one counts
+                for (int k = 0; k < cfg::COUNT; ++k)
+                    if (ROWS[k].iniKey[0] != '\0' && _stricmp(ROWS[k].iniSection, r.iniSection) == 0
+                        && _stricmp(ROWS[k].iniKey, key.c_str()) == 0)
+                    {
+                        g_iniValue[k] = value;
+                        break;
+                    }
+            }
         }
+    }
+
+    void layIni(State& s)
+    {
+        readIniValues();
+        for (int id = 0; id < cfg::COUNT; ++id)
+            if (!g_iniValue[id].empty())
+                put(s, id, g_iniValue[id].c_str(), cfg::INI);
     }
 
     bool same(const State& a, const State& b, int id)
@@ -405,7 +480,7 @@ namespace cfg
         GameData* d = ou->gamedata.getDataByName(RECORD, CONSTANTS);
         if (d == NULL)
             return false;
-        static State next;
+        static State next;      // main loop only; too big for the stack
         defaults(next);
         std::string v;
         std::string base;
@@ -413,7 +488,7 @@ namespace cfg
         {
             if (!fromRecord(d, ROWS[id], v))
                 continue;
-
+            // Nitoryu.mod holds every key at its default: only a value that differs counts as FCS's.
             base = next.text[id];
             double num = next.num[id];
             put(next, id, v, FCS);
@@ -461,6 +536,27 @@ namespace cfg
 
     Source source(Id id) { return valid(id) ? g_state.src[id] : DEFAULT; }
     const char* fcsKey(Id id) { return valid(id) ? ROWS[id].fcs : ""; }
+
+    const std::string& iniPath() { return g_ini; }
+
+    Id byIni(const char* section, const char* key)
+    {
+        for (int id = 0; id < COUNT; ++id)
+            if (ROWS[id].iniKey[0] != 0 && _stricmp(ROWS[id].iniSection, section) == 0 && _stricmp(ROWS[id].iniKey, key) == 0)
+                return (Id)id;
+        return COUNT;
+    }
+
+    std::string baseText(Id id)
+    {
+        if (!valid(id))
+            return std::string();
+        std::string v;
+        GameData* d = ou != NULL ? ou->gamedata.getDataByName(RECORD, CONSTANTS) : NULL;
+        if (d != NULL && fromRecord(d, ROWS[id], v))
+            return v;
+        return ROWS[id].def;
+    }
 
     void log()
     {

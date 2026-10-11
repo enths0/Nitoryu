@@ -1,3 +1,4 @@
+// Nitoryu's pure math (Math.h). No game header here, ever: this file also builds on the host for the unit tests.
 #include "Math.h"
 
 #include <cstdlib>

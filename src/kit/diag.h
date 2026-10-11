@@ -1,3 +1,15 @@
+// Nitoryu runtime helpers. VS2010 (v100) safe.
+//
+// Structured diagnostics, one line per event, that a log reader can parse:
+//
+//     piece id='Wall 3' gate=0 len=255.0 verdict='removed'
+//
+// Rules this encodes:
+//   - no plugin-name prefix: RE_Kenshi already logs the DLL name after startPlugin;
+//   - one named counter per skip/failure reason, never one lumped counter;
+//   - log the measured quantity per object so thresholds come from a histogram.
+// Lines go out through kit/log.h: written at once on the main thread, queued
+// from any other thread once the plugin calls kit::log::tick() every frame.
 #pragma once
 
 #include "log.h"
@@ -44,6 +56,7 @@ namespace kit
         std::string line_;
     };
 
+    // Named counters, emitted as one `<event> reason=count ...` line.
     class Counters
     {
     public:

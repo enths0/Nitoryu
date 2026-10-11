@@ -1,4 +1,12 @@
-#include "kit/input.h"
+// The off-hand guard and the counter (Defense.h). Vanilla flows:
+//   a block is decided by the block animation -> the hook converts HIT_FLESH to HIT_SWORD;
+//   CombatClass::blockingTarget reads NULL at impact -> the main foe is captured in initialiseBlock;
+//   the combat hooks run off the main-loop thread -> all state behind one lock.
+// Threads:
+//   iHit_hook, initBlock_hook - combat threads.
+//   g_lock guards g_def (every defender's guard and counter state); no game original is called under it.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -34,19 +42,20 @@
 
 namespace
 {
-
+    // An impact older than this is not part of the same combo; a captured foe
+    // older than this is forgotten.
     const double COMBO_GAP_MS = 3000.0;
     const double FOE_TTL_MS = 3000.0;
-    const int RECENT = 4;
+    const int RECENT = 4;               // impacts remembered per defender
     const int GUARD_DETAIL_BUDGET = 150;
 
     volatile bool g_enabled = true;
-
-    bool g_guardOn = true;
-    bool g_counterOn = true;
-    double g_cooldownMs = 1000.0;
-    double g_counterMs = 1500.0;
-    float g_counterChance = -1.0f;
+    // copies of the settings (cfg: the table < FCS < the ini), set by applySettings
+    bool g_guardOn = true;              // cfg::GUARD_ON ([Guard] guard)
+    bool g_counterOn = true;            // cfg::COUNTER_ON ([Guard] counter)
+    double g_cooldownMs = 1000.0;       // cfg::GUARD_COOLDOWN_MS
+    double g_counterMs = 1500.0;        // cfg::COUNTER_WINDOW_MS
+    float g_counterChance = -1.0f;      // cfg::COUNTER_CHANCE_FIXED ([Guard] counter_chance); < 0: the DP curve
 
     struct Impact
     {
@@ -60,15 +69,15 @@ namespace
     {
         Impact recent[RECENT];
         int next;
-
-        hand foe;
+        // Handles, resolved just before use (a raw pointer can be seconds old).
+        hand foe;                       // captured in initialiseBlock
         double foeT;
-        hand lastBlocked;
+        hand lastBlocked;               // fallback foe: the attacker of the last blocked impact
         double lastBlockedT;
-        double lastParryT;
-        double mainBlockT;
-        bool parryBack, mainBlockBack;
-        double counterT;
+        double lastParryT;              // last off-hand parry (cooldown)
+        double mainBlockT;              // last hit the main hand blocked (the dual block impact clip)
+        bool parryBack, mainBlockBack;  // that one came from behind, and the rank guards the back
+        double counterT;                // counter armed at (< 0: not armed)
         double seenT;
     };
 
@@ -82,15 +91,21 @@ namespace
         ~Lock() { LeaveCriticalSection(&g_lock); }
     };
 
-    float g_cosArc = -0.342f;
+    // The parry arc. Which local axis of a character's orientation is its facing is not in the
+    // headers, so it is learned in game: whenever anyone starts a block (initialiseBlock), it faces
+    // the foe it blocks; each candidate axis (+Z, -Z, +X, -X) sums its dot product with the direction
+    // to that foe. After AXIS_SAMPLES blocks the best axis wins (logged once as `guard_axis`); until
+    // then the arc check is skipped.
+    float g_cosArc = -0.342f;                       // cos([Guard] arc_deg): 110 deg either side
     const int AXIS_SAMPLES = 24;
     double g_axisSum[4] = { 0.0, 0.0, 0.0, 0.0 };
     int g_axisN = 0;
-    int g_axis = -1;
+    int g_axis = -1;                                // -1: not learned yet
     const Ogre::Vector3 AXES[4] = { Ogre::Vector3::UNIT_Z, Ogre::Vector3::NEGATIVE_UNIT_Z,
                                     Ogre::Vector3::UNIT_X, Ogre::Vector3::NEGATIVE_UNIT_X };
     const char* AXIS_NAME[4] = { "+z", "-z", "+x", "-x" };
 
+    // The flat direction from a to b; false when they stand on each other.
     bool flatDir(const Ogre::Vector3& a, const Ogre::Vector3& b, Ogre::Vector3& out)
     {
         out = b - a;
@@ -98,6 +113,7 @@ namespace
         return out.normalise() > 0.001f;
     }
 
+    // Main loop and combat threads: caller holds g_lock.
     void learnAxis(Character* me, Character* foe)
     {
         if (g_axis >= 0 || me == NULL || foe == NULL)
@@ -122,7 +138,7 @@ namespace
         double mean = g_axisSum[best] / g_axisN;
         if (mean < 0.6)
         {
-
+            // No axis points at the foe clearly (blocks while turning?): start again.
             diag::count("guard_axis_unclear");
             for (int i = 0; i < 4; ++i)
                 g_axisSum[i] = 0.0;
@@ -133,6 +149,7 @@ namespace
         kit::Diag("guard_axis").kv("axis", AXIS_NAME[best]).kv("mean_dot", mean).kv("samples", g_axisN).emit();
     }
 
+    // Is `who` in front of or beside `me` (within the arc)? True while unknown.
     bool inArc(Character* me, Character* who, float& dotOut)
     {
         int axis;
@@ -157,10 +174,14 @@ namespace
         return dotOut >= g_cosArc;
     }
 
+    // Game clock: advanced lazily by whoever asks, and every frame by tick().
+    // (headingDot is in the namespace below.)
     LARGE_INTEGER g_freq, g_lastQpc;
     double g_gameMs = 0.0;
     bool g_clockStarted = false;
 
+    // The game speed from KenshiLib, on any build: 0 while paused, else
+    // GameWorld::getFrameSpeedMultiplier (x1..x5).
     float gameSpeed()
     {
         if (ou == NULL)
@@ -171,6 +192,7 @@ namespace
         return v >= 0.0f && v <= 20.0f ? v : 1.0f;
     }
 
+    // CONSTANTS from the load order's own record, on any build.
     defense::Constants g_const = { false, 70.0f, 0.0f, 200.0f, 0.0f, 200.0f, 1.0f };
 
     float blockBase()
@@ -179,6 +201,7 @@ namespace
         return v > 1.0f && v <= 100.0f ? v : 70.0f;
     }
 
+    // Caller holds the lock.
     double advanceClock()
     {
         LARGE_INTEGER now;
@@ -245,7 +268,7 @@ namespace
     __declspec(thread) Character* t_attacker = NULL;
     __declspec(thread) CombatTechniqueData* t_attack = NULL;
     __declspec(thread) int t_combo = -1;
-    __declspec(thread) Character* t_offParry = NULL;
+    __declspec(thread) Character* t_offParry = NULL;     // victim whose hit the off hand parried
 
     __declspec(thread) bool t_seeded = false;
     float roll01()
@@ -267,6 +290,9 @@ namespace
         }
     }
 
+    // ---- the main guard's foe --------------------------------------------------
+    // blockingTarget reads NULL at impact, so it is read right after initialiseBlock sets it.
+
     bool (*initBlock_orig)(CombatClass*, bool) = NULL;
     bool initBlock_hook(CombatClass* self, bool isStumbling)
     {
@@ -282,7 +308,7 @@ namespace
         if (g_axis < 0)
         {
             Lock l;
-            learnAxis(self->me, foe);
+            learnAxis(self->me, foe);        // anyone who blocks faces the foe
         }
         stance::Info s = stance::evaluate(self->me, NULL);
         if (!s.dual || s.tier < cfg::i(cfg::GUARD_MIN_TIER))
@@ -296,6 +322,8 @@ namespace
         d.foeT = now;
         return r;
     }
+
+    // ---- the off-hand guard ----------------------------------------------------
 
     HitMaterialType (*iHit_orig)(CombatClass*, CutDirection, Damages&, Character*) = NULL;
     HitMaterialType offHandGuard(CombatClass* self, CutDirection dir, Damages& damage, Character* who, bool& ours)
@@ -315,12 +343,15 @@ namespace
         if (!haveCtx)
             diag::count("guard_no_context");
 
+        // A blade guards the back from the back guard's rank (inArc counts and reads the facing axis under
+        // the lock, so it is asked before ours is taken).
         float facingDot = 2.0f;
         const bool behind = !inArc(me, who, facingDot);
         const bool backRank = s.tier >= cfg::i(cfg::BACK_GUARD_MIN_TIER);
 
+        // Record the impact; read what the triggers need.
         bool comboHit = false;
-        hand foeH;
+        hand foeH;                      // resolved after the lock
         bool haveFoe = false;
         bool foeFallback = false;
         double now = 0.0, sinceParry = 0.0;
@@ -346,7 +377,7 @@ namespace
 
             if (r == HIT_SWORD)
             {
-
+                // A vanilla block by the main hand: remember the foe, arm the counter.
                 d.lastBlocked = who->getHandle();
                 d.lastBlockedT = now;
                 d.mainBlockT = now;
@@ -370,10 +401,11 @@ namespace
             }
             sinceParry = now - d.lastParryT;
         }
-        Character* foe = haveFoe ? foeH.getCharacter() : NULL;
+        Character* foe = haveFoe ? foeH.getCharacter() : NULL;     // NULL once it is gone
         if (haveFoe && foe == NULL)
             diag::count("guard_foe_gone");
-
+        // _iHitYouAreYouHit returns only HIT_MISSED, HIT_SWORD or HIT_FLESH (the armour's material comes later,
+        // from hitByMeleeAttack), so HIT_FLESH = it will land.
         if (r != HIT_FLESH || !g_guardOn)
             return r;
         if (s.tier < cfg::i(cfg::GUARD_MIN_TIER))
@@ -381,7 +413,8 @@ namespace
             diag::count("guard_tier_low");
             return r;
         }
-
+        // No parry while the defender swings (either blade: the body is committed), staggers, is out of
+        // combat mode, down, unconscious, ragdolled or carried.
         const char* busy = self->combatState == CHOP_WEAPON ? "guard_own_swing"
                          : self->combatState == STUMBLE ? "guard_staggered"
                          : !self->_isInCombatMode() ? "guard_not_in_combat"
@@ -392,7 +425,8 @@ namespace
             diag::count(busy);
             return r;
         }
-
+        // Only attackers in front or on the flanks. From the back guard's rank the second blade also tries
+        // an attacker behind, at BACK_GUARD_SHARE of the chance.
         if (behind && !backRank)
         {
             diag::count("guard_behind");
@@ -401,7 +435,10 @@ namespace
         if (behind)
             diag::count("guard_back_try");
         bool group = behind || (foe != NULL && who != foe);
-
+        // From MAIN_GUARD_MIN_TIER the second blade also catches the first hit of the enemy the main
+        // blade faces (a 1v1's every hit), at MAIN_GUARD_SHARE of the parry chance. Without it only a
+        // combo's later hits and a second attacker's hits can be parried, so in a 1v1 the off-hand guard
+        // almost never fires.
         bool mainFoe = !comboHit && !group && s.tier >= cfg::i(cfg::MAIN_GUARD_MIN_TIER);
         if (!comboHit && !group && !mainFoe)
         {
@@ -425,11 +462,12 @@ namespace
             diag::count("guard_no_stats");
             return r;
         }
-
+        // bc: the block chance vs this attacker, through our own block-chance hook
+        // (so with the divided guard and clumsiness).
         float bc = myStats->_calculateBlockChance(hisStats->getMeleeAttack());
         float baseBc = blockBase();
-        float g = balance::at(balance::OFF_HAND_GUARD, s.dp);
-
+        float g = balance::at(balance::OFF_HAND_GUARD, s.dp);   // by DP, not by tier
+        // a long blade and a short one parry better
         float pairMult = blades::guardMult(s.main, s.off);
         if (pairMult != 1.0f)
         {
@@ -445,7 +483,7 @@ namespace
         {
             Lock l;
             Defender& d = stateOf(me, now);
-            if (now - d.lastParryT < g_cooldownMs)
+            if (now - d.lastParryT < g_cooldownMs)     // another thread won the race
                 ok = false;
             else
             {
@@ -472,6 +510,7 @@ namespace
         return ok ? HIT_SWORD : r;
     }
 
+    // The final result (after the off-hand guard) also feeds the pressure stacks.
     HitMaterialType iHit_hook(CombatClass* self, CutDirection dir, Damages& damage, Character* who)
     {
         diag::HookCall hc(diag::HK_I_HIT);
@@ -482,8 +521,8 @@ namespace
         if (g_enabled && self != NULL)
         {
             pressure::onImpact(self->me, who, r);
-            flow::onAttacked(self->me, who);
-            blades::noteAttacker(self->me, who);
+            flow::onAttacked(self->me, who);    // every attack aimed at the fighter, any result
+            blades::noteAttacker(self->me, who); // who is attacking a dual fighter
         }
         return r;
     }
@@ -499,7 +538,9 @@ namespace
 
 namespace defense
 {
-
+    // The cosine between `me`'s game heading (the learned forward axis) and the flat direction to `who`;
+    // 2 when unknown. The game heading is the character's own orientation, which the pose engine never
+    // writes (it writes bones only).
     float headingDot(Character* me, Character* who)
     {
         float d = 2.0f;
@@ -522,6 +563,7 @@ namespace defense
         applySettings();
     }
 
+    // From cfg (the table < FCS < the ini); at start and after a change.
     void applySettings()
     {
         g_guardOn = cfg::b(cfg::GUARD_ON);
@@ -545,7 +587,7 @@ namespace defense
         ok &= hook(hooks::add("CombatClass::initialiseBlock", "guard", KenshiLib::GetRealAddress(&CombatClass::initialiseBlock), initBlock_hook, &initBlock_orig),
                    "CombatClass::initialiseBlock");
         char b[160];
-
+        // The block base comes from the data after the load: the `constants` line.
         sprintf_s(b, "guard:%s, cooldown %d ms, arc %.0f deg, counter %s (%d ms window, chance %.2f; -1 = by DP)",
                   g_guardOn ? "on" : "off", (int)g_cooldownMs, acos(g_cosArc) * 180.0 / 3.14159265358979,
                   g_counterOn ? "on" : "off", (int)g_counterMs, g_counterChance);
@@ -555,6 +597,7 @@ namespace defense
 
     void setEnabled(bool on) { g_enabled = on; }
 
+    // The game clock of this frame, for the pose hook without our lock.
     volatile double g_frameMs = 0.0;
 
     void tick()
@@ -569,6 +612,7 @@ namespace defense
 
     double frameMs() { return g_frameMs; }
 
+    // Main loop: GLOBAL CONSTANTS is read until found, then every call re-reads it (cheap: one record).
     void readConstants()
     {
         if (ou == NULL)

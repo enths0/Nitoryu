@@ -1,4 +1,8 @@
-#include "kit/input.h"
+// Threads:
+//   No hook of its own: combat threads queue speech lines, the main loop says them (flush).
+//   g_lock guards g_queue and g_lastSaid; g_noticeLock (ready before any init) guards g_offSeen.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <kenshi/Character.h>
 #include <kenshi/util/hand.h>
@@ -15,7 +19,7 @@
 
 namespace
 {
-    bool g_stage = false;
+    bool g_stage = false;   // [General] env=stage: test builds only
 
     struct Line
     {
@@ -33,6 +37,7 @@ namespace
         ~Lock() { LeaveCriticalSection(&g_lock); }
     };
 
+    // Initialised with the DLL's globals, so a feature can be reported off before init() ran.
     struct NoticeLock
     {
         CRITICAL_SECTION cs;
@@ -45,7 +50,7 @@ namespace
         ~NLock() { LeaveCriticalSection(&g_noticeLock.cs); }
     };
 
-    std::set<std::string> g_offSeen;
+    std::set<std::string> g_offSeen;        // every feature reported, so each is named once
 }
 
 namespace feedback

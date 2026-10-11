@@ -1,4 +1,10 @@
-#include "kit/input.h"
+// Which sounds a fight makes. See SoundTrace.h.
+// Threads:
+//   audioEvent_hook - any thread: the impact sounds come from the combat thread, animation events from the
+//                     main loop. It only reads its arguments and logs (the log queues lines of other threads).
+//   No lock: the budgets are interlocked counters.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -15,9 +21,9 @@
 
 namespace
 {
-    bool g_on = false;
+    bool g_on = false;              // [Test] sound_trace
     volatile LONG g_soundLines = 0, g_impactLines = 0;
-    const LONG SOUND_LINES = 1500, IMPACT_LINES = 600;
+    const LONG SOUND_LINES = 1500, IMPACT_LINES = 600;      // per session
 
     std::string nameOf(Character* c) { return c != NULL ? c->displayName : std::string("<null>"); }
 
@@ -26,7 +32,7 @@ namespace
     {
         bool ok = audioEvent_orig(self, name, range);
         diag::count("sound_calls");
-
+        // Footsteps and idle voices are counted, not logged: they would spend the line budget before a fight.
         if (name != NULL && (strcmp(name, "Footsteps") == 0 || strncmp(name, "VO_Creature_Passive", 19) == 0))
         {
             diag::count("sound_steps_and_idle");

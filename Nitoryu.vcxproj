@@ -72,6 +72,7 @@
     <ClCompile Include="src\Ambidex.cpp" />
     <ClCompile Include="src\Lefty.cpp" />
     <ClCompile Include="src\Lang.cpp" />
+    <ClCompile Include="src\Mcm.cpp" />
     <ClCompile Include="src\Ui.cpp" />
     <ClCompile Include="src\Balance.cpp" />
     <ClCompile Include="src\Settings.cpp" />

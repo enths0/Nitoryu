@@ -1,3 +1,8 @@
+// Nitoryu runtime helpers. VS2010 (v100) safe.
+//
+// Spatial queries that return hands, not raw pointers: removing or changing
+// one object can remove or replace others, so re-resolve each hand just
+// before acting on it (hand::getBuilding() returns NULL once it is gone).
 #pragma once
 
 #include <kenshi/Globals.h>
@@ -10,7 +15,10 @@
 
 namespace kit
 {
-
+    // Every object of `type` (e.g. BUILDING) within `radius` world units of
+    // `pos`, all factions included; filter by getFaction()/getTown() yourself.
+    // The lektor the game fills has no destructor, so its buffer is left to
+    // the game's allocator (as Shutori does): never free it from the plugin.
     inline std::vector<hand> objectsNear(const Ogre::Vector3& pos, float radius, itemType type, int maxNumber)
     {
         std::vector<hand> out;

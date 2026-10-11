@@ -1,4 +1,14 @@
-#include "kit/input.h"
+// Another plugin drives the body (Foreign.h).
+//
+// Such a plugin plays a combat animation of the character's AnimationClass outside the game's combat
+// (combatState COMBAT_FINISHED, combat not active). The game's own lists say what plays:
+// AnimationClassBase::layer -> AnimationLayer::addList -> SingleAnimation, with isACombatAnimation /
+// isABlockAnimation and its weight.
+// Threads:
+//   No hook of its own: the main loop watches the other plugin's animations; combat threads ask blockHeld().
+//   g_blocking.cs guards g_blocking.who.
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include <kenshi/Character.h>
 #include <kenshi/Enums.h>
@@ -18,21 +28,22 @@ namespace
 {
     enum GateMode { GATE_OFF, GATE_AUTO, GATE_ON };
 
-    const float PLAYING_WEIGHT = 0.05f;
+    const float PLAYING_WEIGHT = 0.05f;     // below this an animation is fading in or out: not "playing"
 
     GateMode g_mode = GATE_AUTO;
     bool g_active = false;
-    std::string g_plugin;
+    std::string g_plugin;                   // the loaded plugin auto found, "" when none
     double g_holdMs = 6000.0;
     double g_runMs = 300.0;
-
+    // `foreign_action` lines have their own small budget; the counters go on.
     int g_linesLeft = 20;
-    volatile LONG g_hitLinesLeft = 80;
+    volatile LONG g_hitLinesLeft = 80;      // `incoming_hit` lines per session
 
+    // The characters whose foreign block is up: written by the main loop, read by the combat threads.
     struct Blocking
     {
         CRITICAL_SECTION cs;
-        std::set<Character*> who;
+        std::set<Character*> who;       // compared, never dereferenced
         Blocking() { InitializeCriticalSection(&cs); }
     } g_blocking;
 
@@ -56,6 +67,7 @@ namespace
         return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
     }
 
+    // The combat or block animation playing on any layer, heaviest first. NULL: none.
     AnimationClassBase::SingleAnimation* combatAnimation(AnimationClassBase* a)
     {
         AnimationClassBase::SingleAnimation* best = NULL;
@@ -136,7 +148,7 @@ namespace foreign
             setBlockUp(c, w, false);
             return false;
         }
-
+        // a new animation: another object, or the same address played again from its start
         bool fresh = s != w.anim || s->currentFrameTime01 + 0.2f < w.time01;
         if (fresh)
         {

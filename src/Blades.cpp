@@ -1,4 +1,12 @@
-#include "kit/input.h"
+// The pair, the scissor and the second enemy (Blades.h). Vanilla flows:
+//   MedicalSystem::addWound picks the body part by a weighted roll -> the scissor raises one part's
+//     hitChance for one call;
+//   a swing hits the enemies in a narrow box in front -> the flanker is outside that box.
+// Threads:
+//   addWound_hook - inside hitByMeleeAttack, so on the combat threads; it only notes the part (thread-local).
+//   g_lock guards g_first, g_attackers, g_lastSplit (written by the combat threads, pruned by the main loop).
+
+#include "kit/input.h"   // Windows.h with NOMINMAX first
 
 #include "kit/log.h"
 #include <core/Functions.h>
@@ -31,35 +39,37 @@
 namespace
 {
     const int MAX_ATTACKERS = 6;
-    const double ONE_SWING_MS = 250.0;
-    const float FORCE_PART = 10000.0f;
+    const double ONE_SWING_MS = 250.0;          // one redirect per impact of one swing
+    const float FORCE_PART = 10000.0f;          // x the wanted part's hit chance: the roll all but always takes it
     const unsigned SPLIT_SAY_GAP_MS = 3000;
 
     volatile bool g_enabled = true;
     bool g_woundHook = false;
+    // copies of the settings (cfg: the table < FCS < the ini), set by applySettings
+    bool g_pairOn = true;               // cfg::PAIR_ON ([Pair] pair)
+    float g_shortRatio = 0.8f;          // cfg::PAIR_SHORT_RATIO
+    float g_equalRatio = 0.9f;          // cfg::PAIR_EQUAL_RATIO
+    float g_guardMult = 1.3f;           // cfg::PAIR_GUARD_MULT
+    float g_twinMult = 1.3f;            // cfg::PAIR_TWIN_MULT
+    float g_mixedDefence = 1.0f;        // cfg::PAIR_MIXED_DEFENCE
+    bool g_scissorOn = true;            // cfg::SCISSOR_ON ([Scissor] scissor)
+    double g_scissorMs = 1000.0;        // cfg::SCISSOR_WINDOW_MS
+    bool g_splitOn = true;              // cfg::SPLIT_ON ([Split] split)
+    int g_splitTier = 4;                // cfg::SPLIT_MIN_TIER
+    float g_splitCos = 0.0f;            // cos(cfg::SPLIT_ARC_DEG / 2)
+    float g_splitReach = 1.0f;          // cfg::SPLIT_REACH
+    double g_attackerMs = 4000.0;       // cfg::SPLIT_ATTACKER_MS
 
-    bool g_pairOn = true;
-    float g_shortRatio = 0.8f;
-    float g_equalRatio = 0.9f;
-    float g_guardMult = 1.3f;
-    float g_twinMult = 1.3f;
-    float g_mixedDefence = 1.0f;
-    bool g_scissorOn = true;
-    double g_scissorMs = 1000.0;
-    bool g_splitOn = true;
-    int g_splitTier = 4;
-    float g_splitCos = 0.0f;
-    float g_splitReach = 1.0f;
-    double g_attackerMs = 4000.0;
-
+    // The first blade of a twin that landed on a victim: where, when.
     struct First
     {
         GameData* part;
         double t;
         bool offBlade;
     };
-    typedef std::pair<Character*, Character*> Hit;
+    typedef std::pair<Character*, Character*> Hit;      // attacker, victim
 
+    // Who attacked a dual fighter lately.
     struct Attackers
     {
         hand who[MAX_ATTACKERS];
@@ -76,8 +86,8 @@ namespace
 
     CRITICAL_SECTION g_lock;
     std::map<Hit, First> g_first;
-    std::map<Character*, Attackers> g_attackers;
-    std::map<Character*, LastSplit> g_lastSplit;
+    std::map<Character*, Attackers> g_attackers;    // by victim
+    std::map<Character*, LastSplit> g_lastSplit;    // by attacker
 
     struct Lock
     {
@@ -91,6 +101,7 @@ namespace
 
     bool same(const hand& h, Character* c) { return h == static_cast<const RootObjectBase*>(c); }
 
+    // The length the pair rule reads: the record's `nitoryu pair length`, else its own `length`. 0: unknown.
     float lengthOf(Weapon* w)
     {
         if (w == NULL || w->data == NULL)
@@ -101,6 +112,7 @@ namespace
         return (float)kit::fcsInt(w->data, "length", 0);
     }
 
+    // The body part the game's last addWound on this thread took (the Scissor reads it after the hit).
     __declspec(thread) GameData* t_woundPart = NULL;
 
     GameData* (*addWound_orig)(MedicalSystem*, bool, CutDirection, Damages&, int&, RootObject*, AttackDirection::Enum&,
@@ -170,6 +182,8 @@ namespace blades
         g_lastSplit.erase(c);
     }
 
+    // ---- the pair ----------------------------------------------------------------------
+
     Pair pairOf(Weapon* a, Weapon* b)
     {
         if (!g_enabled || !g_pairOn)
@@ -190,6 +204,7 @@ namespace blades
         return g_enabled && g_pairOn && a != NULL && b != NULL && a->category != b->category;
     }
 
+    // Only when the second weapon has a defence bonus to count.
     bool mixedDefence(Weapon* main, Weapon* off)
     {
         Sword* sw = off != NULL ? off->isSword() : NULL;
@@ -203,12 +218,14 @@ namespace blades
 
     float offDefenceShare(const stance::Info& s, float bonus, float usual)
     {
-
+        // a bonus only: a second weapon with a defence penalty keeps the usual share
         if (bonus <= 0.0f || !mixedTypes(s.main, s.off) || g_mixedDefence <= usual)
             return usual;
         diag::count("pair_mixed_defence");
         return g_mixedDefence;
     }
+
+    // ---- the scissor -------------------------------------------------------------------
 
     Scissor::Scissor(Character* a, Character* v, const stance::Info& s, bool off, bool twin)
         : attacker(a), victim(v), offBlade(off), on(false), second(false), forced(NULL), savedChance(0.0f), wanted(NULL)
@@ -222,7 +239,7 @@ namespace blades
         {
             Lock l;
             std::map<Hit, First>::iterator it = g_first.find(Hit(a, v));
-
+            // the other blade's wound on this victim: this swing's when it is fresh, used once either way
             if (it != g_first.end() && it->second.offBlade != off)
             {
                 if (now >= it->second.t && now - it->second.t <= g_scissorMs)
@@ -271,7 +288,8 @@ namespace blades
     {
         if (!on)
             return;
-
+        // A hit that lands returns the material it met (flesh, or the armour's: metal, chain); the part the
+        // game wounded is what says it landed.
         GameData* part = r != HIT_MISSED && r != HIT_SWORD ? t_woundPart : NULL;
         if (second)
         {
@@ -292,6 +310,8 @@ namespace blades
             g_first.clear();
         g_first[Hit(attacker, victim)] = f;
     }
+
+    // ---- the second enemy --------------------------------------------------------------
 
     void noteAttacker(Character* victim, Character* attacker)
     {
@@ -350,7 +370,7 @@ namespace blades
             if (it != g_attackers.end())
                 list = it->second;
         }
-
+        // the game counts half a weapon's length to each side of the fighter (calculateTargetsInAttackZone)
         float reach = g_splitReach * 0.5f * lengthOf(s.off) + me->getRadius();
         CombatClass* cc = me->getCombatClass();
         Ogre::Vector3 at = me->getPosition();
@@ -361,7 +381,7 @@ namespace blades
         {
             if (now < list.t[i] || now - list.t[i] > g_attackerMs)
                 continue;
-            Character* c = list.who[i].getCharacter();
+            Character* c = list.who[i].getCharacter();     // NULL once it is gone
             if (c == NULL || c == me || c == mainTarget)
                 continue;
             ++fresh;
@@ -370,7 +390,7 @@ namespace blades
                 diag::count("split_flanker_down");
                 continue;
             }
-
+            // already in the swing's own box: the game gives him this blade itself
             bool inZone = false;
             if (cc != NULL)
                 for (uint32_t k = 0; k < cc->targetsInAttackZone.size() && !inZone; ++k)
@@ -391,7 +411,7 @@ namespace blades
                         .kv("refused", "far").kv("dist", dist).kv("reach", reach + c->getRadius()).emit();
                 continue;
             }
-            float dot = defense::headingDot(me, c);
+            float dot = defense::headingDot(me, c);         // 2 = the heading is not known yet
             if (dot > 1.5f || dot < g_splitCos)
             {
                 diag::count(dot > 1.5f ? "split_heading_unknown" : "split_flanker_behind");
@@ -426,7 +446,7 @@ namespace blades
                 g_lastSplit.insert(std::make_pair(me, ls));
         }
         diag::count("split_redirect");
-        feedback::say(me, lang::text("speech.split").c_str(), SPLIT_SAY_GAP_MS);
+        feedback::say(me, lang::text("speech.split").c_str(), SPLIT_SAY_GAP_MS);    // env=stage only
         if (diag::takeDetail())
             kit::Diag("split").kv("who", me->displayName).kv("main_target", mainTarget->displayName)
                 .kv("flanker", best->displayName).kv("dist", bestDist).kv("reach", reach + best->getRadius())

@@ -1,3 +1,8 @@
+// Nitoryu runtime helpers. VS2010 (v100) safe.
+//
+// Read a game record's FCS fields at runtime. GameData::bdata/fdata/idata/
+// sdata are boost::unordered_maps: operator[] would INSERT a default into the
+// game's own record, so only find() is used here.
 #pragma once
 
 #include <kenshi/GameData.h>
@@ -33,6 +38,8 @@ namespace kit
         return it != d->sdata.end() ? it->second : fallback;
     }
 
+    // A `file` field (FCS filevalue, GameData::filesdata), e.g. WEAPON "bare sword"
+    // or "sheath": the path exactly as the game stores it (what attachItem takes).
     inline std::string fcsFile(const GameData* d, const std::string& key, const std::string& fallback)
     {
         if (!d) return fallback;
@@ -40,6 +47,7 @@ namespace kit
         return it != d->filesdata.end() ? it->second : fallback;
     }
 
+    // The record's string id and display name, for log lines (never classify by them).
     inline std::string recordId(const GameData* d) { return d ? d->stringID : std::string("<null>"); }
     inline std::string recordName(const GameData* d) { return d ? d->name : std::string("<null>"); }
 }

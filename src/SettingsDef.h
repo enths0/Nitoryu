@@ -1,6 +1,18 @@
+// Nitoryu's settings: the one table (docs/FCS.md).
+//
+// Each row is a design number that a mod can set in FCS and a player in Nitoryu.ini:
+//   default (this file) < FCS (a field on the CONSTANTS record "GLOBAL CONSTANTS") < an ini key that is present.
+// src/Settings.cpp (cfg) reads it. mod/fcs.def (what FCS Extended loads, so FCS shows the fields with these
+// tooltips) and docs/FCS-settings.md are generated from it. The reasoning behind the numbers is in
+// docs/BALANCE.md.
+//
+// X(id, type, "default", "FCS key", "FCS section", "ini section", "ini key", "tooltip")
+//   type: F float, I int, B bool (1/0), C curve "dp:value,dp:value" (straight lines between the points, flat
+//         outside), L list "a,b,c", S text. C, L and S are text fields in FCS.
+//   ini section/key: "" when the ini has no key for it. No double quotes inside a tooltip.
 #pragma once
 
-#define NITORYU_SETTINGS(X) \
+#define NITORYU_SETTINGS(X)     X(ONLY_MY_STRIKES, B, "1", "nitoryu only my strikes", "Nitoryu 00 main", "Main", "only_my_strikes",       "A fighter with two blades attacks only with Nitoryu's own strikes (each with its animation switch on): no vanilla swing, no other mod's move. Out of reach the fighter walks in; in reach with none of them fitting, the game's pick stays. Off = the game's swings and other mods' moves are mixed in, mirrored onto the left arm.") \
     X(W_SKILL, F, "0.10", "nitoryu dp weight skill", "Nitoryu 01 dual proficiency", "", "", \
       "Dual proficiency (DP, 0-100) is a weighted average of five inputs, each capped at 100. This is the weight of the lower of the two weapon skills. The five weights should sum to 1.") \
     X(W_DEX, F, "0.10", "nitoryu dp weight dexterity", "Nitoryu 01 dual proficiency", "", "", \
@@ -22,7 +34,7 @@
     X(WEIGHT_MULT, F, "1.25", "nitoryu pair weight mult", "Nitoryu 01 dual proficiency", "", "", \
       "Strength rule: a pair weighs this x (main weapon + second weapon) in the weight and speed formula.") \
     \
-    X(OFF_HAND_SHARE, C, "20:0.03,40:0.10,60:0.18,75:0.30,85:0.40,90:0.50,100:0.55", "nitoryu curve off hand share", "Nitoryu 02 curves by DP", "Balance", "off_hand_share", \
+    X(OFF_HAND_SHARE, C, "20:0.20,40:0.23,60:0.26,75:0.30,85:0.40,90:0.50,100:0.55", "nitoryu curve off hand share", "Nitoryu 02 curves by DP", "Balance", "off_hand_share", \
       "Curve DP:value. Share of attacks that use the second blade (an off-hand strike or a twin strike).") \
     X(TWIN_SHARE, C, "59.99:0,60:0.25,100:0.45", "nitoryu curve twin share", "Nitoryu 02 curves by DP", "Balance", "twin_share", \
       "Curve DP:value. Of the second blade's attacks, the share that are twin strikes (both blades).") \
@@ -119,6 +131,8 @@
       "The second blade does not use the same move twice in a row when another one fits.") \
     X(EVEN_PICKS, B, "1", "nitoryu even picks", "Nitoryu 07 moves", "Moves", "even_picks", \
       "Of the second blade's moves that come up for a pick, the fighter takes the one it has used least, so every move is seen about as often. Off: the first that comes up, by the game's own weights.") \
+    X(MAIN_MOVE_SHARE, F, "0.6", "nitoryu main move share", "Nitoryu 07 moves", "Moves", "main_move_share", \
+      "Of the picks the second blade does not take, this share 0-1 is a strike of the right blade with its own animation (a record whose use R arm is on and use L arm off), the least played first; the rest are the game swings. 0 = only the game swings.") \
     X(CROSS_RIPOSTE_CHANCE, F, "0.25", "nitoryu cross riposte chance", "Nitoryu 07 moves", "Moves", "cross_riposte_chance", \
       "Chance that the answer to a block or a parry is the X cut (the riposte finisher); otherwise it is an ordinary riposte.") \
     X(OFF_CARRY_ON, B, "1", "nitoryu off hand carry", "Nitoryu 07 moves", "Moves", "offhand_carry", \
@@ -271,5 +285,7 @@
     \
     X(RUN_HOLD_FREE_WEIGHT, F, "0.5", "nitoryu run hold free weight", "Nitoryu 17 animations", "Animations", "run_hold_free_weight", \
       "The two-blade run draws the arms and the torso over the legs of the run that is playing. When it cannot keep in step with that run (another mod's run animation), the torso takes only this share of the pose, 0-1: 0 = the torso is left to the other run, 1 = fully ours. The arms always take it in full.") \
+    X(RUN_STYLE, I, "3", "nitoryu run style", "Nitoryu 17 animations", "Animations", "run_style", \
+      "Which run a dual fighter shows (while [Animations] run_hold is on): 0 = both blades trailing over the game legs, 1 = stance 1 (the left arm thrown back, its blade trailing low), 2 = stance 2 (the right blade dragging behind, the left at the shoulder), 3 = stance 3 (the right blade reversed along the back, the left out to the right), 4 = stance 1 or 3, drawn once per fighter. Stances 1-3 move the whole body, legs included, in step with the game run; over another mod run they give way to 0.") \
     X(YIELD_TO_REACTIONS, B, "1", "nitoryu yield to reactions", "Nitoryu 17 animations", "Animations", "yield_to_reactions", \
       "While the game plays a stagger, a knockdown, a knockout or a get-up on a dual fighter, the dual pose steps aside and that animation shows, the game's own or another mod's. Off: the dual pose stays on the upper body through it.")

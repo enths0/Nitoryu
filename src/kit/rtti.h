@@ -1,3 +1,11 @@
+// Nitoryu runtime helpers. VS2010 (v100) safe.
+//
+// Find a virtual function that KenshiLib does not export, by class name, at
+// run time: MSVC RTTI names every polymorphic class (".?AVTask_MeleeAttack@@"),
+// so the vtable is found the same way on Steam, GOG and any rebuild that keeps
+// the class. Chain: the name string (inside the TypeDescriptor, at +16) ->
+// the Complete Object Locator that points at it (signature 1, offset 0, its own
+// RVA at +20) -> the vtable (the qword after a pointer to that locator).
 #pragma once
 
 #include <windows.h>
@@ -34,6 +42,8 @@ namespace kit
         }
     }
 
+    // The vtable of MSVC class `mangled` (e.g. ".?AVTask_MeleeAttack@@") in the
+    // game executable, or NULL. Scans .data and .rdata once per call (~20 ms).
     inline void** findVtable(const char* mangled)
     {
         using namespace rtti_detail;
@@ -42,14 +52,14 @@ namespace kit
         unsigned char *dlo, *dhi, *rlo, *rhi;
         if (!section(m, ".data", dlo, dhi) || !section(m, ".rdata", rlo, rhi))
             return NULL;
-        size_t len = strlen(mangled) + 1;
+        size_t len = strlen(mangled) + 1;               // with the NUL
         unsigned char* name = findBytes(dlo, dhi, mangled, len, 1);
         if (name == NULL)
             name = findBytes(rlo, rhi, mangled, len, 1);
         if (name == NULL)
             return NULL;
         DWORD tdRva = (DWORD)((name - 16) - base);
-
+        // Complete Object Locator: {sig=1, offset=0, cdOffset, pTypeDescriptor, pClassDescriptor, pSelf} (RVAs).
         for (unsigned char* p = rlo; p + 24 <= rhi; p += 4)
         {
             const DWORD* col = reinterpret_cast<const DWORD*>(p);
@@ -63,6 +73,7 @@ namespace kit
         return NULL;
     }
 
+    // Follows one incremental-link thunk (E9 rel32) to the function body.
     inline void* followThunk(void* f)
     {
         unsigned char* p = static_cast<unsigned char*>(f);
@@ -71,6 +82,8 @@ namespace kit
         return f;
     }
 
+    // True if the first `n` bytes of `f` contain `needle` (a cheap identity check
+    // before hooking something found by name).
     inline bool codeContains(void* f, size_t n, const void* needle, size_t m)
     {
         unsigned char* p = static_cast<unsigned char*>(f);
